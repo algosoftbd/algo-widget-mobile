@@ -472,7 +472,8 @@ void _panelTests() {
         httpClient: _StubClient((req, body) {
           if (req.url.path.endsWith('/session')) {
             if (portal == null) {
-              return http.Response(jsonEncode({'error': 'unknown portal'}), 404);
+              return http.Response(
+                  jsonEncode({'error': 'unknown portal'}), 404);
             }
             return http.Response(
               jsonEncode(
