@@ -144,7 +144,15 @@ export class PanelSession {
       }),
     );
     if (identity?.name || identity?.email) send(postToFrame(identityMessage(identity)));
-    send(postToFrame(recordCapabilitiesMessage(offered)));
+    // Both halves must be true: a native module that reports it can screenshot
+    // is no use if the panel was constructed without one to call.
+    send(
+      postToFrame(
+        recordCapabilitiesMessage(offered, {
+          snip: this.deps.native !== null && widget.capabilities.canScreenshot,
+        }),
+      ),
+    );
   }
 
   private async screenshot(): Promise<void> {

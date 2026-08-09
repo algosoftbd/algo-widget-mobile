@@ -335,7 +335,7 @@ be unrecoverable.
 |---|---|---|
 | `init` | on `ready` | `{token, exp, page, portal}`. No token ⇒ send nothing: the frame renders no form without one. |
 | `identity` | after `init` | Its own message. Nested inside `init` it is ignored. |
-| `record-capabilities` | after `init` | Its own message, same reason. `{steps, voice, screen}`, ANDed by the frame with the portal's opt-in. |
+| `record-capabilities` | after `init` | Its own message, same reason. `{steps, voice, screen}`, ANDed by the frame with the portal's opt-in, plus `snip` — see below. |
 | `record-started` | recording begins | `{mode, maxMs}` |
 | `record-tick` | ~1 s while recording | `{ms, maxMs, events}` — **elapsed and cap**, not a remainder; the frame renders `2:31 left` itself. |
 | `record-result` / `record-cancelled` / `record-error` | recording ends | |
@@ -347,6 +347,19 @@ be unrecoverable.
 `ready`, `size`, `close`, `fullscreen`, `snip-request`, `record-start`, `record-stop`, `submitted`.
 Anything unrecognised is ignored rather than fatal: the frame ships continuously and an older app
 will meet messages it has never heard of.
+
+### `snip`, and why its default is the other way round
+
+`snip` rides `record-capabilities` because it answers the same question — what can *this host* do.
+Its default in the frame is the **inverse** of the recording tiers': a tier is offered only when a
+client says `true`, but snip is offered unless a client says `false`. That asymmetry is not a
+slip. Every web loader ever shipped can screenshot its own page and none of them sends the field,
+so absent has to mean supported or the button would vanish for the web. A client with no native
+capture must therefore say `false` **out loud** — otherwise the panel offers "Snip this page", the
+request reaches a host that cannot answer it, and the reporter gets `Screen capture failed`: a
+button whose only possible outcome is an error.
+
+Neither SDK ships a `NativeCapture` yet, so both send `snip: false` in practice today.
 
 ### Known gap: `attached`
 

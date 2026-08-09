@@ -70,12 +70,23 @@ export function identityMessage(identity: { name?: string; email?: string }): ob
  * tier is off: the frame offers a recorder only for a tier it was explicitly
  * told about.
  */
-export function recordCapabilitiesMessage(modes: readonly RecordMode[]): object {
+export function recordCapabilitiesMessage(
+  modes: readonly RecordMode[],
+  opts: { snip: boolean },
+): object {
   return {
     type: 'algo-widget:record-capabilities',
     steps: modes.includes('steps'),
     voice: modes.includes('voice'),
     screen: modes.includes('screen'),
+    // Not a recording tier, but the same question — what can THIS host do — and
+    // the frame reads it off this message. Its default there is the OPPOSITE of
+    // the tiers': absent means SUPPORTED, because every web loader can snip and
+    // none of them sends the field, so a client with no native screenshot must
+    // say `false` OUT LOUD. Without it the panel offers "Snip this page", the
+    // request reaches a host that cannot answer it, and the reporter gets
+    // "Screen capture failed" — a button whose only outcome is an error.
+    snip: opts.snip,
   };
 }
 

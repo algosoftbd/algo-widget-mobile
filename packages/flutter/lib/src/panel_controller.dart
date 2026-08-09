@@ -161,7 +161,12 @@ class PanelSession {
       send(
           postToFrame(identityMessage(name: who['name'], email: who['email'])));
     }
-    send(postToFrame(recordCapabilitiesMessage(offered)));
+    // Both halves must be true: a native module that reports it can screenshot
+    // is no use if the panel was constructed without one to call.
+    send(postToFrame(recordCapabilitiesMessage(
+      offered,
+      snip: native != null && widget.capabilities.canScreenshot,
+    )));
   }
 
   /// NOTE ON `algo-widget:attached`, sent here and from [_stop]: THE FRAME DOES

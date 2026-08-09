@@ -831,7 +831,11 @@ function fakeNative(overrides: Record<string, unknown> = {}) {
 /** `portal: null` = the portal refused us, so no ticket is ever minted. */
 async function panelFixture(
   portal: Record<string, unknown> | null,
-  opts: { identity?: { name?: string; email?: string } } = {},
+  opts: {
+    identity?: { name?: string; email?: string };
+    /** `null` = the panel was built with no native capture to call. */
+    native?: null;
+  } = {},
 ) {
   const sent: string[] = [];
   const native = fakeNative();
@@ -866,7 +870,7 @@ async function panelFixture(
   });
   const session = new PanelSession({
     widget,
-    native: native as never,
+    native: opts.native === null ? null : (native as never),
     readFile: async () => new Uint8Array([1, 2, 3]),
     send: (js) => sent.push(js),
     ...(opts.identity ? { identity: opts.identity } : {}),
@@ -1149,6 +1153,27 @@ test('init is three messages, because that is what the frame listens for', async
   assert.equal(caps.steps, true);
   assert.equal(caps.voice, true);
   widget.dispose();
+});
+
+test('a client that cannot screenshot says so, and loses the button', async () => {
+  // "Snip this page" whose only possible outcome is "Screen capture failed" is
+  // worse than no button. Absent, the field means SUPPORTED — every web loader
+  // can snip and none of them sends it — so a client without native capture has
+  // to say `false` out loud.
+  const caps = (sent: string[]) =>
+    sent
+      .map((_, i) => sentPayload(sent, i))
+      .find((m) => m.type === 'algo-widget:record-capabilities');
+
+  const withNative = await panelFixture(FULL_PORTAL);
+  await withNative.session.handle({ type: 'algo-widget:ready' });
+  assert.equal(caps(withNative.sent)?.snip, true);
+  withNative.widget.dispose();
+
+  const bare = await panelFixture(FULL_PORTAL, { native: null });
+  await bare.session.handle({ type: 'algo-widget:ready' });
+  assert.equal(caps(bare.sent)?.snip, false);
+  bare.widget.dispose();
 });
 
 test('a session that cannot be minted sends nothing it cannot back up', async () => {
