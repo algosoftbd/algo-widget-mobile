@@ -43,6 +43,12 @@ export interface AlgoWidgetPanelProps {
   identity?: { name?: string; email?: string };
   onClose?: () => void;
   onSubmitted?: (issueId: string | null) => void;
+  /** The panel is initialised and about to render a form — take your loading
+   *  state down here. A WebView is blank while it loads, and on a phone that
+   *  blank is the whole screen, so pressing "Report a problem" looks like it did
+   *  nothing until this fires. Once per session; never, if no ticket could be
+   *  minted. */
+  onReady?: () => void;
   style?: unknown;
 }
 
@@ -54,6 +60,7 @@ export function AlgoWidgetPanel({
   identity,
   onClose,
   onSubmitted,
+  onReady,
   style,
 }: AlgoWidgetPanelProps) {
   const ref = useRef<WebViewLike | null>(null);
@@ -72,9 +79,10 @@ export function AlgoWidgetPanel({
         ...(identity ? { identity } : {}),
         ...(onClose ? { onClose } : {}),
         ...(onSubmitted ? { onSubmitted } : {}),
+        ...(onReady ? { onReady } : {}),
         onHeight: setHeight,
       }),
-    [widget, native, readFile, identity, onClose, onSubmitted],
+    [widget, native, readFile, identity, onClose, onSubmitted, onReady],
   );
 
   // Disposing is not optional: a panel unmounted mid-recording must stop the

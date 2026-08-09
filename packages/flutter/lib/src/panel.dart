@@ -31,6 +31,7 @@ class AlgoWidgetPanel extends StatefulWidget {
     this.identity,
     this.onClose,
     this.onSubmitted,
+    this.onReady,
   });
 
   final AlgoWidget widget;
@@ -43,6 +44,13 @@ class AlgoWidgetPanel extends StatefulWidget {
   final Map<String, String>? identity;
   final void Function()? onClose;
   final void Function(String? issueId)? onSubmitted;
+
+  /// The panel is initialised and about to render a form — take your loading
+  /// state down here. A WebView is blank while it loads, and on a phone that
+  /// blank is the whole screen, so pressing "Report a problem" looks like it
+  /// did nothing until this fires. Once per session; never, if no ticket could
+  /// be minted.
+  final void Function()? onReady;
 
   @override
   State<AlgoWidgetPanel> createState() => _AlgoWidgetPanelState();
@@ -64,6 +72,7 @@ class _AlgoWidgetPanelState extends State<AlgoWidgetPanel> {
       identity: widget.identity,
       onClose: widget.onClose,
       onSubmitted: widget.onSubmitted,
+      onReady: widget.onReady,
       // The controller is read at CALL time rather than captured, because the
       // first messages can arrive before this State has finished building.
       send: (js) => _controller.runJavaScript(js),

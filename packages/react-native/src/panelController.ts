@@ -38,6 +38,21 @@ export interface PanelDeps {
   identity?: { name?: string; email?: string };
   onClose?: () => void;
   onSubmitted?: (issueId: string | null) => void;
+  /**
+   * The panel is live — initialised, and about to render a form.
+   *
+   * A WebView is blank while it loads, and on a phone that blank is the whole
+   * screen: pressing "Report a problem" appeared to do nothing for a moment,
+   * then a spinner appeared inside the page, then the form. The SDK cannot draw
+   * a loading state for you (this package deliberately imports no UI), but it
+   * can tell you exactly when to take yours down.
+   *
+   * Fires ONCE per session, after init has gone across — not on `ready`, which
+   * the panel answers again on load and which says only that the document
+   * exists. A session with no ticket never fires it at all: there is nothing to
+   * reveal.
+   */
+  onReady?: () => void;
   /** The panel wants the whole screen (the annotation editor does). The host
    *  decides what that means for its own layout. */
   onFullscreen?: (on: boolean) => void;
@@ -54,6 +69,9 @@ export const TICK_MS = 1_000;
 export class PanelSession {
   private readonly deps: PanelDeps;
   private mode: RecordMode | null = null;
+  /** `onReady` is a "take your loading state down" signal, and taking it down
+   *  twice is not a thing. The frame answers `ready` again on load. */
+  private announced = false;
 
   constructor(deps: PanelDeps) {
     this.deps = deps;
@@ -153,6 +171,10 @@ export class PanelSession {
         }),
       ),
     );
+    if (!this.announced) {
+      this.announced = true;
+      this.deps.onReady?.();
+    }
   }
 
   private async screenshot(): Promise<void> {
