@@ -1,3 +1,12 @@
+## [0.1.4](https://github.com/algosoftbd/algo-widget-mobile/compare/react-native-v0.1.3...react-native-v0.1.4) (2026-08-09)
+
+
+### Bug Fixes
+
+* a client that cannot screenshot must say so ([f263e99](https://github.com/algosoftbd/algo-widget-mobile/commit/f263e991d01a83c706207b4a65fcd93940d3d5d5))
+
+
+
 ## [0.1.3](https://github.com/algosoftbd/algo-widget-mobile/compare/react-native-v0.1.2...react-native-v0.1.3) (2026-08-09)
 
 
