@@ -294,3 +294,65 @@ team can read this repository; that is why it is public.
 
 Server first, always. The trace and crash version ceilings are server constants; a client ahead of
 the server is refused, and on mobile "refused" means every installed copy until users update.
+
+## 8. The panel bridge
+
+The four HTTP calls above are only half of what an SDK speaks. The report UI itself is not
+reimplemented per platform: it is the **same page the web widget serves** — `/widget/frame` on the OS
+host — loaded in a WebView, and the SDK plays the part the web loader plays on a customer's page.
+The messages have the same names in both directions and the frame cannot tell which client it is
+talking to, which is the property that keeps one form, one draft store and one annotation editor
+serving every platform.
+
+Two things about the transport are load-bearing, and each of them has cost a shipped release.
+
+**The frame is posted OBJECTS.** It reads `event.data.type` directly, because a web postMessage hands
+it a structured clone. A WebView bridge has no structured clone — all it can inject is source text —
+so `postToFrame` builds the payload as a JSON string *literal* (a reporter's apostrophe stays data)
+and parses it back before posting:
+
+```js
+(window.__algoPost || window.postMessage)(JSON.parse("{…}"), '*');
+```
+
+Posted as the string, `data.type` is `undefined` and the frame drops **every** message the SDK sends:
+the panel loads, waits for an `init` it has already been given, and sits on "Loading…" forever, with
+a Close button that does nothing. The frame now also parses a string, so a build shipped before that
+fix still works — but tolerance is not the contract, and one wire shape is what keeps the frame free
+of a per-client branch.
+
+**The frame must be able to HEAR the SDK**, which needs the shim (`frameShim`). The frame answers
+with `window.parent.postMessage(...)` — right on the web, where it is an iframe talking to the
+loader. In a WebView `window.parent === window`, so the call reaches no native channel at all. The
+shim patches `window.postMessage` to forward to the channel while still delivering in-page, and it
+**must run before the page's own scripts**: `ready` is announced once, as the frame mounts, which can
+precede the load event. Both panels also re-answer on load, because a missed `ready` would otherwise
+be unrecoverable.
+
+### What the SDK sends
+
+| message | when | notes |
+|---|---|---|
+| `init` | on `ready` | `{token, exp, page, portal}`. No token ⇒ send nothing: the frame renders no form without one. |
+| `identity` | after `init` | Its own message. Nested inside `init` it is ignored. |
+| `record-capabilities` | after `init` | Its own message, same reason. `{steps, voice, screen}`, ANDed by the frame with the portal's opt-in. |
+| `record-started` | recording begins | `{mode, maxMs}` |
+| `record-tick` | ~1 s while recording | `{ms, maxMs, events}` — **elapsed and cap**, not a remainder; the frame renders `2:31 left` itself. |
+| `record-result` / `record-cancelled` / `record-error` | recording ends | |
+| `snip-error` | a screenshot failed | |
+| `attached` | a native capture was staged | **The frame does not implement this yet** — see below. |
+
+### What the frame sends
+
+`ready`, `size`, `close`, `fullscreen`, `snip-request`, `record-start`, `record-stop`, `submitted`.
+Anything unrecognised is ignored rather than fatal: the frame ships continuously and an older app
+will meet messages it has never heard of.
+
+### Known gap: `attached`
+
+The frame's attachments are local files it stages itself, and it has no case for one that is
+*already* on the server — which is what a native screenshot or recording produces. The message is
+currently dropped. It is unreachable in practice (a capture needs a `NativeCapture`, and none ships
+yet), but a caller that wires one up will see the capture succeed and no card appear. The frame half
+lands with the native one; the name and shape are settled here so both sides are written against the
+same thing.

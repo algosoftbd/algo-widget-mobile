@@ -124,12 +124,23 @@ FrameMessage? parseFrameMessage(Object? raw) {
 ///
 /// Double-encoded deliberately: the payload becomes a single JS string literal,
 /// so a reporter's own text — a name with an apostrophe, a description with a
-/// newline — stays data rather than breaking out of the expression.
+/// newline — stays data rather than breaking out of the expression. It is parsed
+/// back into an OBJECT before it is posted, and that is the load-bearing half:
+/// the frame reads `event.data.type` directly, because on the web it is handed a
+/// structured clone. Posted as the string, `.type` was `undefined` and the frame
+/// dropped every message this SDK sent — the panel loaded, waited for an `init`
+/// it had already been given, and sat on "Loading…" forever.
+///
+/// The frame now parses a string too, so a build shipped before this fix still
+/// works. That is the tolerance; this is the contract. Do not go back to sending
+/// a string because "it works either way" — the web loader has always posted
+/// objects, and one wire shape is what keeps the frame from having to know which
+/// client it is talking to.
 String postToFrame(Map<String, Object?> message) {
   final payload = jsonEncode(jsonEncode(message));
   // Prefer the un-patched function the shim stashed: going through the patched
   // one would forward our own init straight back to us.
-  return "(window.__algoPost || window.postMessage)($payload, '*');true;";
+  return "(window.__algoPost || window.postMessage)(JSON.parse($payload), '*');true;";
 }
 
 /// The bridge the frame needs in order to be heard at all.
@@ -165,9 +176,6 @@ Map<String, Object?> frameInit({
   required int exp,
   required String page,
   required Map<String, Object?> portal,
-  String? name,
-  String? email,
-  Map<String, bool>? capabilities,
 }) =>
     <String, Object?>{
       'type': 'algo-widget:init',
@@ -175,23 +183,61 @@ Map<String, Object?> frameInit({
       'exp': exp,
       'page': page,
       'portal': portal,
-      if (name != null || email != null)
-        'identity': <String, Object?>{
-          if (name != null) 'name': name,
-          if (email != null) 'email': email,
-        },
-      // Which tiers this CLIENT can actually offer, ANDed with what the portal
-      // allows. A device without a microphone permission must not be shown a
-      // tier that will fail the moment it is pressed.
-      if (capabilities != null) 'capabilities': capabilities,
     };
 
-/// Live recording status — the countdown the reporter watches, sent on a timer
-/// so the panel can show `2:31 left` without owning the clock.
-Map<String, Object?> recordTick(int remainingMs, int events) =>
+/// Prefilled, editable, and never trusted — reporter-supplied identity is
+/// display data server-side no matter who typed it.
+///
+/// Its OWN message, following init, because that is what the frame listens for.
+/// Carried inside init it was silently ignored, and the name and email the host
+/// app already knew were never prefilled.
+Map<String, Object?> identityMessage({String? name, String? email}) =>
+    <String, Object?>{
+      'type': 'algo-widget:identity',
+      if (name != null) 'name': name,
+      if (email != null) 'email': email,
+    };
+
+/// Which recording tiers this CLIENT can actually offer. A device with no
+/// microphone permission must not be shown a tier that will fail the moment it
+/// is pressed.
+///
+/// Also its own message, for the same reason — and the frame ANDs it with the
+/// portal's own opt-in, so capability here is not permission. Absent means every
+/// tier is off: the frame offers a recorder only for a tier it was explicitly
+/// told about.
+Map<String, Object?> recordCapabilitiesMessage(List<String> modes) =>
+    <String, Object?>{
+      'type': 'algo-widget:record-capabilities',
+      'steps': modes.contains('steps'),
+      'voice': modes.contains('voice'),
+      'screen': modes.contains('screen'),
+    };
+
+/// Recording started — the panel swaps its picker for the live card. `maxMs` is
+/// carried here as well as on every tick so the countdown is right on the first
+/// frame instead of a second later.
+Map<String, Object?> recordStarted(String mode, int limitMs) =>
+    <String, Object?>{
+      'type': 'algo-widget:record-started',
+      'mode': mode,
+      'maxMs': limitMs < 0 ? 0 : limitMs,
+    };
+
+/// Live recording status, sent on a timer while recording.
+///
+/// ELAPSED and CAP, not a remainder: the panel renders `2:31 left` from
+/// `maxMs - ms` itself, and it keeps the last `maxMs` it was told so a dropped
+/// tick does not freeze the clock. `remainingMs` was a field it has never read.
+Map<String, Object?> recordTick({
+  required int elapsedMs,
+  required int limitMs,
+  required int events,
+}) =>
     <String, Object?>{
       'type': 'algo-widget:record-tick',
-      'remainingMs': remainingMs < 0 ? 0 : remainingMs,
+      'ms': elapsedMs < 0 ? 0 : elapsedMs,
+      'maxMs': limitMs < 0 ? 0 : limitMs,
       'events': events,
     };
 
