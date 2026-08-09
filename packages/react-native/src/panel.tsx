@@ -5,7 +5,7 @@
 // `PanelSession`, which is driven message-by-message in tests with no device.
 // What is left here is a WebView, a ref and a timer.
 //
-// Behind a subpath (`@algosoft/algo-widget-react-native/panel`) rather than the
+// Behind a subpath (`@algosoftltd/algo-widget-react-native/panel`) rather than the
 // main entry, so an app that builds its own report UI never pulls in React or
 // react-native-webview, and so the core stays runnable by `node --test` with no
 // build step.

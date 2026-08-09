@@ -27,7 +27,7 @@ First release. Everything from the wire protocol up to a one-call
   a WebView. An unrecognised message is ignored rather than fatal, because the
   panel and the SDK version independently.
 
-- **`AlgoWidgetPanel`** (from `@algosoft/algo-widget-react-native/panel`) — the
+- **`AlgoWidgetPanel`** (from `@algosoftltd/algo-widget-react-native/panel`) — the
   report panel in a WebView, loading the same page the web widget serves. Behind
   a subpath so an app that builds its own report UI never pulls in React or
   react-native-webview.

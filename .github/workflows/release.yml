@@ -2,7 +2,7 @@
 #
 # TAG-DRIVEN AND PER-PACKAGE. A tag names exactly one package and one version:
 #
-#     react-native-v0.1.0   → npm  @algosoft/algo-widget-react-native
+#     react-native-v0.1.0   → npm  @algosoftltd/algo-widget-react-native
 #     flutter-v0.1.0        → pub.dev  algo_widget
 #
 # One tag per package rather than one version for the repository, because the

@@ -1,4 +1,4 @@
-# @algosoft/algo-widget-react-native
+# @algosoftltd/algo-widget-react-native
 
 In-app bug reporting for React Native apps. A user reports a problem from inside
 your app — text, screenshot, voice narration, screen recording, and a recorded
@@ -39,7 +39,7 @@ Not negotiable, and checked in CI rather than promised in prose:
 ## Usage
 
 ```ts
-import { AlgoWidgetClient, TraceRecorder } from '@algosoft/algo-widget-react-native';
+import { AlgoWidgetClient, TraceRecorder } from '@algosoftltd/algo-widget-react-native';
 
 const client = new AlgoWidgetClient({
   host: 'https://os.example.com',

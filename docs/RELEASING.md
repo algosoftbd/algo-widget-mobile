@@ -7,7 +7,7 @@ contract honest is CI's `contract` job — a shared version number would only lo
 like a guarantee.
 
 ```
-react-native-v0.1.0   → npm      @algosoft/algo-widget-react-native
+react-native-v0.1.0   → npm      @algosoftltd/algo-widget-react-native
 flutter-v0.1.0        → pub.dev  algo_widget
 ```
 
@@ -22,9 +22,9 @@ repository — both need an account action.
 
 ### npm
 
-1. On npmjs.com, create the `@algosoft` org (or confirm it exists) and add
+1. On npmjs.com, create the `@algosoftltd` org (or confirm it exists) and add
    whoever will own the package.
-2. Create a **Granular Access Token** scoped to `@algosoft/*` with
+2. Create a **Granular Access Token** scoped to `@algosoftltd/*` with
    *Read and write*.
 3. Add it here as the repository secret **`NPM_TOKEN`**
    (Settings → Secrets and variables → Actions).

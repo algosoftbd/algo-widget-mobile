@@ -16,7 +16,7 @@ channel → a manager accepts → Algo AI implements → draft PR.
 | package | language | install |
 |---|---|---|
 | [`algo_widget`](packages/flutter) | Dart | `flutter pub add algo_widget` |
-| [`@algosoft/algo-widget-react-native`](packages/react-native) | TypeScript | `npm i @algosoft/algo-widget-react-native` |
+| [`@algosoftltd/algo-widget-react-native`](packages/react-native) | TypeScript | `npm i @algosoftltd/algo-widget-react-native` |
 | [`packages/android`](packages/android) | Kotlin | native capture core |
 | [`packages/ios`](packages/ios) | Swift | native capture core |
 
