@@ -132,10 +132,14 @@ response, and the attachment ref.
 
 ## Releasing
 
-Tags are per package — `flutter-v0.1.0`, `react-native-v0.1.0`. CI checks the tag against the
-manifest before publishing, because neither npm nor pub.dev lets you replace a published version.
-Neither registry is wired up yet; [docs/RELEASING.md](docs/RELEASING.md) lists the two account
-actions that cannot be done from inside this repository.
+Nobody edits a version by hand. Conventional commits drive it: a push to `main` bumps the affected
+package, writes its changelog, tags it and opens a **draft** release. Because the two packages sit on
+independent version lines, the versioning action runs twice, each scoped by `git-path` — a commit
+touching only `packages/flutter` leaves the npm package alone.
+
+Publishing is a separate, deliberate step (`gh workflow run release.yml --ref <tag>`), because
+neither registry lets you replace a published version. Full runbook, including why the dispatch must
+run against the *tag* ref: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Licence
 

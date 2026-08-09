@@ -1,0 +1,113 @@
+# Versioning, changelogs, tags and draft releases — from the commits.
+#
+# Mirrors the AlgoSoft OS repo's Release Draft workflow (same action, same
+# shape), with the one difference this repository forces: it holds TWO packages
+# on independent version lines, so the action runs twice, each scoped by
+# `git-path`. A commit touching only `packages/flutter` bumps `algo_widget` and
+# leaves the npm package alone, and vice versa. That is the whole reason the
+# tags are per-package.
+#
+# WHAT THIS WORKFLOW DOES NOT DO IS PUBLISH. It bumps, writes the changelog,
+# tags and opens a DRAFT release — and stops. Publishing is `release.yml`, run
+# deliberately against a tag, because npm and pub.dev both refuse to replace a
+# published version: the draft is the last place a wrong number is still free.
+name: Version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Two runs racing would each try to push a version commit to main, and the
+  # loser would fail on a non-fast-forward. Never cancel a run mid-way, though:
+  # it may already have tagged.
+  group: version
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The action reads the whole history to work out what changed since
+          # the last tag. A shallow clone silently produces a first-release
+          # changelog every time.
+          fetch-depth: 0
+
+      # SEQUENTIAL, not two jobs. Both steps commit to main, and in parallel the
+      # second push would be rejected as non-fast-forward — intermittently,
+      # depending on which finished first, which is the worst kind of failure to
+      # diagnose in a release pipeline.
+      - name: React Native — version, changelog, tag
+        id: rn
+        uses: TriPSs/conventional-changelog-action@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          git-path: packages/react-native
+          version-file: packages/react-native/package.json
+          output-file: packages/react-native/CHANGELOG.md
+          tag-prefix: react-native-v
+          # Keeps package-lock.json's version in step with package.json's. The
+          # action stages with `git add .`, so the sync lands in the same commit.
+          pre-commit: ./scripts/release-pre-commit.cjs
+          # Nothing to release is the NORMAL case here: most commits touch one
+          # package, and a docs change touches neither. Skipping keeps this
+          # workflow silent rather than shipping empty patch versions.
+          skip-on-empty: true
+
+      - name: Flutter — version, changelog, tag
+        id: flutter
+        uses: TriPSs/conventional-changelog-action@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          git-path: packages/flutter
+          version-file: packages/flutter/pubspec.yaml
+          output-file: packages/flutter/CHANGELOG.md
+          tag-prefix: flutter-v
+          skip-on-empty: true
+
+      # DRAFT, deliberately. A published release is a notification and an
+      # artifact people link to; a draft is a proposal you can still delete.
+      # Since publishing is a separate, manual step anyway, the draft is where
+      # you read the generated changelog and decide the version is right.
+      - name: Draft the React Native release
+        if: steps.rn.outputs.skipped == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rn.outputs.tag }}
+          name: ${{ steps.rn.outputs.tag }}
+          body: ${{ steps.rn.outputs.clean_changelog }}
+          draft: true
+
+      - name: Draft the Flutter release
+        if: steps.flutter.outputs.skipped == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.flutter.outputs.tag }}
+          name: ${{ steps.flutter.outputs.tag }}
+          body: ${{ steps.flutter.outputs.clean_changelog }}
+          draft: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Versions"
+            echo
+            if [ "${{ steps.rn.outputs.skipped }}" = "false" ]; then
+              echo "- React Native → \`${{ steps.rn.outputs.tag }}\`"
+            else
+              echo "- React Native — no releasable changes"
+            fi
+            if [ "${{ steps.flutter.outputs.skipped }}" = "false" ]; then
+              echo "- Flutter → \`${{ steps.flutter.outputs.tag }}\`"
+            else
+              echo "- Flutter — no releasable changes"
+            fi
+            echo
+            echo "Nothing is published yet. Run **Release** against the tag to publish."
+          } >> "$GITHUB_STEP_SUMMARY"

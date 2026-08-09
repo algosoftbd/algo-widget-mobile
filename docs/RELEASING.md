@@ -1,5 +1,6 @@
 # Releasing
 
+Versions, changelogs and tags come from the commits — see *Cutting a release*.
 Tags are **per package**, because the packages have different release cadences
 and forcing them to move together would mean publishing a Dart package to fix a
 Kotlin bug. What keeps them compatible is the wire contract, and what keeps the
@@ -15,50 +16,93 @@ The workflow checks the tag against the manifest **before** publishing, because
 neither registry lets you replace a published version. A mismatch fails the run
 rather than shipping a wrong number.
 
-## One-time setup
+## Registry setup
 
-Neither registry is configured yet, and neither can be from inside this
-repository — both need an account action.
+Both registries are configured. Kept here because neither could be done from
+inside this repository, and both would have to be redone on a new one.
 
-### npm
+### npm — done
 
-1. On npmjs.com, create the `@algosoftltd` org (or confirm it exists) and add
-   whoever will own the package.
-2. Create a **Granular Access Token** scoped to `@algosoftltd/*` with
-   *Read and write*.
-3. Add it here as the repository secret **`NPM_TOKEN`**
-   (Settings → Secrets and variables → Actions).
-4. Create the `release` **environment** (Settings → Environments). The workflow
-   requires it, which is what lets you put an approval gate in front of a
-   publish if you want one.
+`NPM_TOKEN` is set and the `release` environment exists. Two things cost a
+failed run each while setting this up, and are worth knowing if the token is
+ever rotated:
+
+- a scoped `PUT` npm cannot place answers **404, not 403** — it does not leak
+  whether an org exists, so "not found" can mean the org, the token's scope, or
+  a granular token limited to *existing* packages;
+- an org with 2FA enforced refuses an ordinary token with *"Two-factor
+  authentication or granular access token with bypass 2fa enabled is required"*.
+  CI has nobody to tap a phone: use a **Classic → Automation** token, which
+  exists for exactly this.
 
 The workflow publishes with `--provenance`, so the package carries a signed,
 verifiable link back to this repository and the exact commit — worth having on a
 package that customers install into their own apps.
 
-### pub.dev
+### pub.dev — done
 
-pub.dev prefers **automated publishing** over a long-lived credential, and the
-result is that there is no publish secret in this repository at all:
+There is no publish secret in this repository at all: pub.dev authenticates the
+workflow by OIDC. The package was published manually once (pub.dev cannot
+configure automation for a package that does not exist yet), and its admin page
+now has **Automated publishing → GitHub Actions** enabled for
+`algosoftbd/algo-widget-mobile` with the tag pattern `flutter-v{{version}}`.
 
-1. Publish `algo_widget` manually **once**, from a machine logged in with
-   `dart pub login` — pub.dev cannot configure automation for a package that
-   does not exist yet.
-2. On the package's admin page, enable **Automated publishing → GitHub Actions**,
-   set the repository to `algosoftbd/algo-widget-mobile` and the tag pattern to
-   `flutter-v{{version}}`.
-3. Everything after that is the tag.
+**`workflow_dispatch` events must be enabled there**, because that is how this
+repo publishes — see the section above on why the dispatch has to run against
+the tag ref.
 
 ## Cutting a release
 
+Nobody edits a version by hand. **Version** (`.github/workflows/version.yml`)
+runs on every push to `main`, reads the conventional commits since the last tag
+and does the rest — the same action and the same shape the AlgoSoft OS repo
+uses, with one difference this repo forces.
+
+That difference is `git-path`. Two packages sit on independent version lines, so
+the action runs **twice**, each scoped to its own directory: a commit touching
+only `packages/flutter` bumps `algo_widget` and leaves the npm package
+untouched. It runs the two steps sequentially rather than as parallel jobs,
+because both push a commit to `main` and the loser of a race gets a
+non-fast-forward — intermittently, which is the worst kind of release failure to
+diagnose.
+
+Write commits that say what they did, and the version follows:
+
+| commit | effect |
+|---|---|
+| `fix(rn): …` | patch |
+| `feat(rn): …` | minor |
+| `feat!: …` or a `BREAKING CHANGE:` footer | major |
+| `docs:`, `chore:`, `test:` | nothing — `skip-on-empty` keeps the workflow silent |
+
+The run bumps the manifest, writes the CHANGELOG, commits with `[skip ci]` (so
+it does not retrigger itself), tags, and opens a **draft** GitHub release
+carrying the generated notes.
+
+## Publishing
+
+**Version does not publish.** Both registries refuse to replace a published
+version, so the gap between tagging and publishing is the last place a wrong
+number is still free — read the draft release, then publish deliberately:
+
 ```bash
-# 1. bump the manifest and write the changelog entry in the same commit
-#    packages/react-native/package.json  ·  packages/flutter/pubspec.yaml
-# 2. merge to main, wait for CI
-# 3. tag
-git tag react-native-v0.1.0 && git push origin react-native-v0.1.0
-git tag flutter-v0.1.0     && git push origin flutter-v0.1.0
+gh workflow run release.yml --repo algosoftbd/algo-widget-mobile \
+  --ref react-native-v0.1.1
 ```
+
+or pick the tag in the **Run workflow** ref selector.
+
+**Run it against the TAG, not against `main` with the tag as an input.** That is
+not tidiness: pub.dev authenticates the run by OIDC and checks the ref the
+workflow ran *for* against its configured tag pattern. A workflow dispatched on
+`main` presents a claim that says `main`, and checking the tag out afterwards
+does not change what the token says — pub.dev refuses it. The jobs guard on
+`refs/tags/…` so a dispatch on a branch is refused here first, with a clearer
+result than a registry rejection.
+
+The workflow re-checks the tag against the manifest before publishing, so a tag
+that disagrees with `package.json` or `pubspec.yaml` fails the run rather than
+shipping the wrong number.
 
 ## Before the first release
 
