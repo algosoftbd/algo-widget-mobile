@@ -97,6 +97,25 @@ jobs:
           cache: true
       - run: flutter pub get
 
+      # THE PUB.DEV CREDENTIAL. `dart-lang/setup-dart` performs this exchange
+      # for you; `subosito/flutter-action` does not, and swapping one for the
+      # other when this became a Flutter package silently removed it. With no
+      # PUB_TOKEN in the environment `pub publish` falls back to its interactive
+      # browser flow and waits — in CI, forever, until the job is cancelled or
+      # times out. It does not fail fast, which is what made it look like a
+      # permissions problem rather than a missing step.
+      #
+      # There is still no publish secret in this repository: the token is minted
+      # per run from GitHub's OIDC provider and is worthless anywhere else.
+      - name: Mint a pub.dev credential from GitHub's OIDC provider
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('https://pub.dev');
+            core.setSecret(token);
+            core.exportVariable('PUB_TOKEN', token);
+      - run: dart pub token add https://pub.dev --env-var PUB_TOKEN
+
       - name: The tag and pubspec.yaml must agree
         run: |
           tag="${GITHUB_REF_NAME#flutter-v}"
