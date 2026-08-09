@@ -40,3 +40,15 @@ export {
   type TracePage,
 } from './protocol.ts';
 export { elementFromProps, type ReactNativeElementProps } from './element.ts';
+export {
+  bindAll,
+  bindConsole,
+  bindCrashHandler,
+  bindNetwork,
+  bindRejectionHandler,
+  makeNavigationTracker,
+  shapeOf,
+  type BindOptions,
+  type Sinks,
+  type Unbind,
+} from './bindings.ts';

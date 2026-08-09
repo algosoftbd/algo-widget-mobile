@@ -99,8 +99,8 @@ SDK into evidence. An SDK that is only initialised still files reports; they jus
 | interaction recorder (events, retention, clock, redaction) | **implemented, tested** |
 | crash reporter (throttles, persistence, signature) | **implemented, tested** |
 | element ladder | **implemented, tested** |
+| React Native bindings — fetch/console/crash/navigation | **implemented, tested** |
 | Flutter navigation / Dio interceptor bindings | in progress |
-| React Native nav / fetch interceptor bindings | in progress |
 | screen recording, voice, screenshot (native) | scaffolded — needs device work |
 | WebView report UI host | scaffolded |
 | iOS App Attest | **blocked on server support**; use `attestation: 'off'` for internal builds |
@@ -120,6 +120,11 @@ cd packages/flutter && dart pub get && dart analyze && dart test
 
 Both suites run without a device or a simulator, deliberately: the protocol, the recorder and the
 crash throttles are where the expensive bugs live, so they are written to be testable on a laptop.
+
+The server contract is verified separately, against a running AlgoSoft OS, by
+`scripts/check-widget-mobile.mjs` in that repository. It is what caught the three shape errors this
+SDK would otherwise have shipped — a form field named `file` instead of `files`, the staging
+response, and the attachment ref.
 
 ## Releasing
 

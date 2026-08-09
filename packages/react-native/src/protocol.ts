@@ -169,11 +169,42 @@ export type SessionResult =
   | { kind: 'challenge'; challenge: string; exp: number }
   | { kind: 'refused'; status: number; reason: string; retryable: boolean };
 
+/**
+ * One accepted upload, as the staging route returns it.
+ *
+ * Note the field is `filename`, not `name`, and there is no size or content
+ * type: the STORED content type is derived server-side from the extension and
+ * is deliberately not the client's to declare.
+ */
 export interface StagedFile {
   fileId: string;
-  name: string;
-  contentType: string;
-  size: number;
+  filename: string;
+  /** 'image' | 'audio' | 'video' | 'trace' — echoed back, and accepted-and-
+   *  ignored when a ref is sent with the report. */
+  kind?: string;
+}
+
+/** A file the route REFUSED, with its reason. A rejection arrives inside a 200
+ *  beside whatever succeeded — one bad attachment must never fail a whole
+ *  submission, so it is reported rather than thrown. */
+export interface RejectedFile {
+  filename: string;
+  reason: string;
+}
+
+/** The staging route's response. Not a single object: the part is repeatable,
+ *  and a request can be partly accepted. */
+export interface StageResponse {
+  ok: boolean;
+  uploaded: StagedFile[];
+  rejected: RejectedFile[];
+}
+
+/** What the report route accepts as an attachment. `{ fileId, filename }` — a
+ *  staging response echoed back verbatim would be REFUSED, because `kind` is
+ *  tolerated but `name`/`contentType`/`size` are not. */
+export function attachmentRef(file: StagedFile): { fileId: string; filename: string } {
+  return { fileId: file.fileId, filename: file.filename };
 }
 
 // ── Normalization ──────────────────────────────────────────────────────────

@@ -16,6 +16,14 @@ import { TraceRecorder, stripQuery } from '../src/recorder.ts';
 import { CrashReporter, crashSignature, type CrashStore } from '../src/crash.ts';
 import { AlgoWidgetClient } from '../src/client.ts';
 import { elementFromProps, looksMinified } from '../src/element.ts';
+import {
+  bindAll,
+  bindConsole,
+  bindCrashHandler,
+  bindNetwork,
+  makeNavigationTracker,
+  shapeOf,
+} from '../src/bindings.ts';
 
 test('retention keeps the head AND the tail, and says what it dropped', () => {
   const events: TraceEvent[] = Array.from({ length: 700 }, (_, i) => ({
@@ -339,4 +347,215 @@ test('visible text is only collected when no stronger rung named the element', (
 test('normalizeElement drops an all-empty descriptor', () => {
   assert.equal(normalizeElement({}), undefined);
   assert.equal(normalizeElement(undefined), undefined);
+});
+
+// ── The staging contract ───────────────────────────────────────────────────
+// Every assertion below is a mistake that was actually made and was caught by
+// running the real routes, not by reading them. They are pinned here so the
+// next change to this file has to argue with them.
+
+test('staging posts a part named `files`, not `file`', async () => {
+  let fieldNames: string[] = [];
+  const client = new AlgoWidgetClient({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    fetch: (async (url: string, init: RequestInit) => {
+      if (String(url).endsWith('/session')) {
+        return new Response(
+          JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal: {} }),
+          { status: 200 },
+        );
+      }
+      fieldNames = [...(init.body as FormData).keys()];
+      return new Response(
+        JSON.stringify({ ok: true, uploaded: [{ fileId: 'f1', filename: 'trace.json', kind: 'trace' }], rejected: [] }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch,
+  });
+  const staged = await client.stage(new Uint8Array([1, 2]), 'trace.json', 'application/json');
+  assert.deepEqual(fieldNames, ['files'], 'a part named `file` yields 400 "no files"');
+  assert.equal(staged?.fileId, 'f1');
+  assert.equal(staged?.filename, 'trace.json');
+});
+
+test('a 200 carrying a rejection is not a success', async () => {
+  const dropped: string[] = [];
+  const client = new AlgoWidgetClient({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    onEvidenceDropped: (_f, reason) => dropped.push(reason),
+    fetch: (async (url: string) => {
+      if (String(url).endsWith('/session')) {
+        return new Response(
+          JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal: {} }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({ ok: true, uploaded: [], rejected: [{ filename: 'big.mp4', reason: 'too large' }] }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch,
+  });
+  assert.equal(await client.stage(new Uint8Array([1]), 'big.mp4', 'video/mp4'), null);
+  // Never silent: a reporter's screen recording going missing is reported to
+  // the host even though the report itself still submits.
+  assert.deepEqual(dropped, ['too large']);
+});
+
+test('an attachment ref is {fileId, filename} — not the staging response', async () => {
+  let sent: Record<string, unknown> = {};
+  const client = new AlgoWidgetClient({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    fetch: (async (url: string, init: RequestInit) => {
+      if (String(url).endsWith('/session')) {
+        return new Response(
+          JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal: {} }),
+          { status: 200 },
+        );
+      }
+      sent = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ issueId: 'i1' }), { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  await client.report({
+    description: 'x',
+    attachments: [{ fileId: 'f1', filename: 'trace.json', kind: 'trace' }],
+  });
+  // `kind` is tolerated by the server but there is no reason to send it; a
+  // `name`/`contentType`/`size` shape is refused outright.
+  assert.deepEqual(sent.attachments, [{ fileId: 'f1', filename: 'trace.json' }]);
+});
+
+// ── Bindings ───────────────────────────────────────────────────────────────
+// These patch globals the host app shares, so the properties worth asserting
+// are the ones about being a good guest: chain, restore, never throw.
+
+test('the network binding records failures and leaves successes alone', async () => {
+  const rec = new TraceRecorder({ platform: 'android', framework: 'react_native', maxSeconds: 60 });
+  rec.start('/a');
+  const realFetch = globalThis.fetch;
+  // The binding must restore whatever it FOUND — which is this stub, not the
+  // platform's fetch. Asserting against the platform's would be asserting that
+  // an unbind clobbers whatever the host installed before us.
+  const stub = (async (url: string) =>
+    new Response('', { status: String(url).includes('bad') ? 500 : 200 })) as unknown as typeof fetch;
+  globalThis.fetch = stub;
+
+  const unbind = bindNetwork({ recorder: rec });
+  await fetch('https://api.example.com/ok');
+  await fetch('https://api.example.com/bad?token=secret');
+  unbind();
+
+  const reqs = rec.build().events.filter((e) => e.type === 'request');
+  assert.equal(reqs.length, 1, 'a 200 is not evidence');
+  assert.equal(reqs[0]!.status, 500);
+  assert.ok(!JSON.stringify(reqs).includes('secret'), 'a query string never reaches the trace');
+  assert.equal(globalThis.fetch, stub, 'unbinding restores exactly what was there');
+  globalThis.fetch = realFetch;
+});
+
+test('a transport failure is recorded as status 0 and still throws to the app', async () => {
+  const rec = new TraceRecorder({ platform: 'android', framework: 'react_native', maxSeconds: 60 });
+  rec.start('/a');
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error('Network request failed');
+  }) as unknown as typeof fetch;
+
+  const unbind = bindNetwork({ recorder: rec });
+  await assert.rejects(() => fetch('https://api.example.com/x'), /Network request failed/);
+  unbind();
+  globalThis.fetch = original;
+
+  const reqs = rec.build().events.filter((e) => e.type === 'request');
+  assert.equal(reqs[0]!.status, 0, 'no response ever arrived');
+});
+
+test('console capture records the SHAPE of an argument, never its contents', () => {
+  const rec = new TraceRecorder({ platform: 'android', framework: 'react_native', maxSeconds: 60 });
+  rec.start('/a');
+  const original = console.error;
+  let passedThrough = 0;
+  console.error = () => {
+    passedThrough += 1;
+  };
+
+  const unbind = bindConsole({ recorder: rec });
+  console.error('save failed', { patientId: 'P-4821', ssn: '123-45-6789' });
+  unbind();
+  console.error = original;
+
+  const line = rec.build().events.find((e) => e.type === 'console');
+  assert.equal(line?.message, 'save failed [Object]');
+  // The single most likely place for a user's record to leak is an object an
+  // app logged while it was failing.
+  assert.ok(!JSON.stringify(line).includes('P-4821'));
+  assert.equal(passedThrough, 1, "the app's own console still runs");
+});
+
+test('shapeOf keeps developer-written text and drops payloads', () => {
+  assert.equal(shapeOf('boom'), 'boom');
+  assert.equal(shapeOf(new TypeError('nope')), 'TypeError: nope');
+  assert.equal(shapeOf({ a: 1 }), '[Object]');
+  assert.equal(shapeOf([1, 2, 3]), '[Array(3)]');
+  assert.equal(shapeOf(null), 'null');
+});
+
+test('the crash handler CHAINS to an existing one rather than replacing it', async () => {
+  const store = memoryStore();
+  const rep = new CrashReporter({ store, currentRoute: () => '/orders' });
+  const seenByHost: string[] = [];
+  let handler: ((e: Error, fatal?: boolean) => void) | undefined = (e) => seenByHost.push(e.message);
+  const utils = {
+    getGlobalHandler: () => handler,
+    setGlobalHandler: (h: (e: Error, fatal?: boolean) => void) => {
+      handler = h;
+    },
+  };
+
+  const unbind = bindCrashHandler(rep, utils);
+  handler!(new TypeError('boom'), true);
+  await new Promise((r) => setTimeout(r, 10));
+
+  // An app with Crashlytics already has a handler; taking it over would
+  // silently stop their crash reporting the day this SDK is added.
+  assert.deepEqual(seenByHost, ['boom']);
+  assert.equal(store.items.length, 1, 'and ours captured it too');
+  unbind();
+  handler!(new TypeError('after'), true);
+  assert.deepEqual(seenByHost, ['boom', 'after'], 'unbinding restores the original');
+});
+
+test('the navigation tracker feeds the recorder and answers the crash reporter', () => {
+  const rec = new TraceRecorder({ platform: 'android', framework: 'react_native', maxSeconds: 60 });
+  rec.start('/orders');
+  const nav = makeNavigationTracker({ recorder: rec });
+  nav.onRouteChange('/orders/42');
+  nav.onRouteChange('/orders/42'); // a re-render is not a navigation
+  nav.onRouteChange('/login', 'app');
+
+  const navs = rec.build().events.filter((e) => e.type === 'nav');
+  assert.equal(navs.length, 2);
+  assert.equal(navs[1]!.cause, 'app');
+  assert.equal(nav.currentRoute(), '/login', 'read fresh on every crash');
+});
+
+test('bindAll returns one teardown that restores everything', () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const unbind = bindAll({ crashes: false });
+  assert.notEqual(globalThis.fetch, originalFetch);
+  unbind();
+  assert.equal(globalThis.fetch, originalFetch);
+  assert.doesNotThrow(() => unbind(), 'teardown is idempotent');
+  assert.equal(console.error, originalError);
 });

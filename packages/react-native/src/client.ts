@@ -8,12 +8,14 @@ import {
   CRASH_VERSION,
   MAX_BYTES,
   TRACE_VERSION,
+  attachmentRef,
   kindForFilename,
   type AppFacts,
   type CrashReport,
   type Platform,
   type SessionResult,
   type StagedFile,
+  type StageResponse,
   type Ticket,
   type Trace,
 } from './protocol.ts';
@@ -38,9 +40,20 @@ export interface ClientOptions {
   appId: string;
   app?: AppFacts;
   attest?: AttestationProvider;
+  /** Called once for every piece of evidence that could not be staged. A
+   *  report submits without it either way — evidence going missing must never
+   *  block a reporter — but it is never silent. */
+  onEvidenceDropped?: (filename: string, reason: string) => void;
   fetch?: typeof globalThis.fetch;
   /** Wall clock, injectable so ticket-expiry logic is testable. */
   now?: () => number;
+}
+
+/** Trailing slashes, without the backtracking a `/\/+$/` invites. */
+function stripTrailingSlash(host: string): string {
+  let end = host.length;
+  while (end > 0 && host[end - 1] === '/') end -= 1;
+  return host.slice(0, end);
 }
 
 /** Re-mint this far before a ticket actually expires, so a long upload cannot
@@ -57,7 +70,7 @@ export class AlgoWidgetClient {
   private pending: Promise<Ticket | null> | null = null;
 
   constructor(opts: ClientOptions) {
-    this.opts = { ...opts, host: opts.host.replace(/\/+$/, '') };
+    this.opts = { ...opts, host: stripTrailingSlash(opts.host) };
     this.doFetch = opts.fetch ?? globalThis.fetch;
     this.now = opts.now ?? Date.now;
   }
@@ -182,16 +195,43 @@ export class AlgoWidgetClient {
     contentType: string,
   ): Promise<StagedFile | null> {
     const kind = kindForFilename(filename);
-    if (!kind) return null;
+    if (!kind) {
+      this.dropped(filename, 'unsupported file type');
+      return null;
+    }
     const size = bytes instanceof Blob ? bytes.size : bytes.byteLength;
-    if (size > MAX_BYTES[kind]) return null;
+    if (size > MAX_BYTES[kind]) {
+      this.dropped(filename, `too large (max ${Math.round(MAX_BYTES[kind] / 1024 / 1024)} MB)`);
+      return null;
+    }
 
     const form = new FormData();
     const blob = bytes instanceof Blob ? bytes : new Blob([bytes as BlobPart], { type: contentType });
-    form.append('file', blob, filename);
+    // The part is named `files` and is REPEATABLE (the route reads
+    // `getAll('files')`). A part named `file` gets a 400 "no files".
+    form.append('files', blob, filename);
     const res = await this.authed('/api/widget/files', { method: 'POST', body: form });
-    if (!res?.ok) return null;
-    return (await res.json().catch(() => null)) as StagedFile | null;
+    if (!res?.ok) {
+      this.dropped(filename, `upload failed (${res?.status ?? 'network'})`);
+      return null;
+    }
+    const body = (await res.json().catch(() => null)) as StageResponse | null;
+    // A 200 does NOT mean accepted: a per-file rejection comes back in
+    // `rejected` beside whatever succeeded, because one bad attachment must
+    // never fail a whole submission.
+    const rejected = body?.rejected?.[0];
+    if (rejected) {
+      this.dropped(rejected.filename, rejected.reason);
+      return null;
+    }
+    return body?.uploaded?.[0] ?? null;
+  }
+
+  /** Every piece of evidence that goes missing is reported once, here — the
+   *  report still submits without it, but silently losing a reporter's
+   *  screen recording is not something an SDK gets to do quietly. */
+  private dropped(filename: string, reason: string): void {
+    this.opts.onEvidenceDropped?.(filename, reason);
   }
 
   /** Stage a trace. Its own method because the version stamp and the byte cap
@@ -222,7 +262,9 @@ export class AlgoWidgetClient {
         ...(input.email ? { email: input.email } : {}),
         ...(input.route ? { page: input.route } : {}),
         ...(this.opts.app ? { app: this.opts.app } : {}),
-        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+        ...(input.attachments?.length
+          ? { attachments: input.attachments.map(attachmentRef) }
+          : {}),
       }),
     });
     if (!res?.ok) return null;

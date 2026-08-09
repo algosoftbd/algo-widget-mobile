@@ -100,11 +100,25 @@ shown an attestation error learns nothing they can act on. Log it, and hide the 
 
 ## 2. Staging evidence
 
-`POST /api/widget/files`, `multipart/form-data`, one part named `file`, ticket in `x-widget-token`.
+`POST /api/widget/files`, `multipart/form-data`, ticket in `x-widget-token`.
 
+The part is named **`files`** — plural, and repeatable up to six per request. The route reads
+`getAll('files')`; a part named `file` gets a `400 {"error":"no files"}`.
+
+```jsonc
+→ 200 {
+  "ok": true,
+  "uploaded": [ { "fileId": "…", "filename": "trace.json", "kind": "trace" } ],
+  "rejected": [ { "filename": "huge.mp4", "reason": "too large (max 60 MB for video)" } ]
+}
 ```
-→ 200 { "fileId": "…", "name": "…", "contentType": "…", "size": 1234 }
-```
+
+**A 200 does not mean accepted.** A per-file rejection comes back in `rejected` beside whatever
+succeeded — one bad attachment must never fail a whole submission — so an SDK checks the arrays, not
+the status. Evidence that goes missing is reported to the host, never swallowed.
+
+The STORED content type is derived server-side from the **extension**; what the client declares is
+only checked for agreement with it. Name files correctly.
 
 Caps (server-enforced; an SDK should enforce them too, so a reporter is told before the upload):
 
@@ -118,9 +132,6 @@ Caps (server-enforced; an SDK should enforce them too, so a reporter is told bef
 **Prefer `.m4a` for audio.** It is AAC-in-MP4, which both platforms write natively and which the
 transcription service accepts by name with no re-encode. `.aac` and `.3gp` are accepted but cost a
 server-side transcode.
-
-The stored content type comes from the **extension**, never from what the client declares. Name files
-correctly.
 
 Six attachments per report.
 
@@ -212,10 +223,13 @@ POST /api/widget/report
   "name": "…", "email": "…",          // optional, unverified, display-only
   "page": "/orders/42",               // the screen route
   "app": { "appVersion": …, "buildNumber": …, "osVersion": …, "deviceModel": …, "locale": … },
-  "attachments": [ { "fileId": …, "name": …, "contentType": …, "size": … } ] }
+  "attachments": [ { "fileId": …, "filename": … } ] }   // NOT the staging response echoed back
 
 → 200 { "issueId": "…" }
 ```
+
+An attachment ref is `{ fileId, filename }`. A staging response echoed back verbatim is refused:
+`kind` is tolerated, but `name` / `contentType` / `size` are not fields this route accepts.
 
 `app` here is descriptive only. The identity half (platform, appId) is taken from the ticket, so
 there is no point sending it and no way to spoof it.

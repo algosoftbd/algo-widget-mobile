@@ -122,32 +122,39 @@ class SessionRefused extends SessionResult {
   final bool retryable;
 }
 
+/// One accepted upload, as the staging route returns it.
+///
+/// The field is `filename`, not `name`, and there is no size or content type:
+/// the STORED content type is derived server-side from the extension and is
+/// deliberately not the client's to declare.
 class StagedFile {
-  const StagedFile({
-    required this.fileId,
-    required this.name,
-    required this.contentType,
-    required this.size,
-  });
+  const StagedFile({required this.fileId, required this.filename, this.kind});
 
   factory StagedFile.fromJson(Map<String, Object?> json) => StagedFile(
         fileId: json['fileId'] as String? ?? '',
-        name: json['name'] as String? ?? '',
-        contentType: json['contentType'] as String? ?? '',
-        size: (json['size'] as num?)?.toInt() ?? 0,
+        filename: json['filename'] as String? ?? '',
+        kind: json['kind'] as String?,
       );
 
   final String fileId;
-  final String name;
-  final String contentType;
-  final int size;
+  final String filename;
 
-  Map<String, Object?> toJson() => {
-        'fileId': fileId,
-        'name': name,
-        'contentType': contentType,
-        'size': size,
-      };
+  /// 'image' | 'audio' | 'video' | 'trace' — echoed back, and
+  /// accepted-and-ignored when a ref is sent with the report.
+  final String? kind;
+
+  /// What the REPORT route accepts. A staging response echoed back verbatim
+  /// would be refused: `kind` is tolerated, `name`/`contentType`/`size` are not.
+  Map<String, Object?> toRef() => {'fileId': fileId, 'filename': filename};
+}
+
+/// A file the route REFUSED, with its reason. A rejection arrives inside a 200
+/// beside whatever succeeded — one bad attachment must never fail a whole
+/// submission, so it is reported rather than thrown.
+class RejectedFile {
+  const RejectedFile({required this.filename, required this.reason});
+  final String filename;
+  final String reason;
 }
 
 /// Re-mint this far before a ticket actually expires, so a long upload cannot
@@ -162,6 +169,7 @@ class AlgoWidgetClient {
     required this.appId,
     this.app,
     this.attest,
+    this.onEvidenceDropped,
     http.Client? httpClient,
     DateTime Function()? clock,
   })  : host = host.replaceAll(RegExp(r'/+$'), ''),
@@ -180,6 +188,11 @@ class AlgoWidgetClient {
   final String appId;
   final AppFacts? app;
   final AttestationProvider? attest;
+
+  /// Called once for every piece of evidence that could not be staged. A report
+  /// submits without it either way — evidence going missing must never block a
+  /// reporter — but it is never silent.
+  final void Function(String filename, String reason)? onEvidenceDropped;
 
   final http.Client _http;
   final DateTime Function() _clock;
@@ -298,27 +311,60 @@ class AlgoWidgetClient {
   Future<StagedFile?> stage(
       Uint8List bytes, String filename, String contentType) async {
     final kind = kindForFilename(filename);
-    if (kind == null) return null;
+    if (kind == null) {
+      _dropped(filename, 'unsupported file type');
+      return null;
+    }
     final cap = kMaxBytes[kind];
-    if (cap == null || bytes.length > cap) return null;
+    if (cap == null || bytes.length > cap) {
+      _dropped(filename, 'too large');
+      return null;
+    }
 
     final ticket = await session();
     if (ticket == null) return null;
 
-    final request = http.MultipartRequest(
-        'POST', Uri.parse('$host/api/widget/files'))
-      ..headers['x-widget-token'] = ticket.token
-      ..files
-          .add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    // The part is named `files` and is REPEATABLE (the route reads
+    // `getAll('files')`). A part named `file` gets a 400 "no files".
+    final request =
+        http.MultipartRequest('POST', Uri.parse('$host/api/widget/files'))
+          ..headers['x-widget-token'] = ticket.token
+          ..files.add(
+              http.MultipartFile.fromBytes('files', bytes, filename: filename));
     try {
       final streamed = await request.send();
       final res = await http.Response.fromStream(streamed);
-      if (res.statusCode != 200) return null;
-      return StagedFile.fromJson(_decode(res.body));
+      if (res.statusCode != 200) {
+        _dropped(filename, 'upload failed (${res.statusCode})');
+        return null;
+      }
+      final body = _decode(res.body);
+      // A 200 does NOT mean accepted: a per-file rejection comes back in
+      // `rejected` beside whatever succeeded, because one bad attachment must
+      // never fail a whole submission.
+      final rejected = body['rejected'] as List<Object?>? ?? const [];
+      if (rejected.isNotEmpty) {
+        final first = rejected.first! as Map<String, Object?>;
+        _dropped(
+          first['filename'] as String? ?? filename,
+          first['reason'] as String? ?? 'refused',
+        );
+        return null;
+      }
+      final uploaded = body['uploaded'] as List<Object?>? ?? const [];
+      if (uploaded.isEmpty) return null;
+      return StagedFile.fromJson(uploaded.first! as Map<String, Object?>);
     } catch (_) {
+      _dropped(filename, 'upload failed');
       return null;
     }
   }
+
+  /// Every piece of evidence that goes missing is reported once, here — the
+  /// report still submits without it, but silently losing a reporter's screen
+  /// recording is not something an SDK gets to do quietly.
+  void _dropped(String filename, String reason) =>
+      onEvidenceDropped?.call(filename, reason);
 
   /// Stage a trace. Its own method because the version stamp and the byte cap
   /// are the two things a caller must not have to remember.
@@ -345,7 +391,7 @@ class AlgoWidgetClient {
       if (route != null) 'page': route,
       if (app != null) 'app': app!.toJson(),
       if (attachments.isNotEmpty)
-        'attachments': attachments.map((a) => a.toJson()).toList(),
+        'attachments': attachments.map((a) => a.toRef()).toList(),
     });
     if (res == null || res.statusCode != 200) return null;
     return _decode(res.body)['issueId'] as String?;
