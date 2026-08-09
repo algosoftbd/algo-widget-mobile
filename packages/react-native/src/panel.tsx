@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AlgoWidget } from './algoWidget.ts';
 import type { NativeCapture } from './capture.ts';
-import { frameUrl } from './frameBridge.ts';
+import { frameShim, frameUrl } from './frameBridge.ts';
 import { PanelSession, TICK_MS } from './panelController.ts';
 
 /** The bits of `react-native-webview`'s API this component uses. Structural, so
@@ -31,6 +31,8 @@ export interface AlgoWidgetPanelProps {
     ref?: React.Ref<WebViewLike>;
     source: { uri: string };
     onMessage: (event: { nativeEvent: { data: string } }) => void;
+    injectedJavaScriptBeforeContentLoaded?: string;
+    onLoadEnd?: () => void;
     style?: unknown;
     originWhitelist?: string[];
     javaScriptEnabled?: boolean;
@@ -92,6 +94,16 @@ export function AlgoWidgetPanel({
     [session],
   );
 
+  // A SECOND chance at init. The frame sends `ready` once, on mount; if that
+  // arrives before the bridge is listening the panel waits forever on a message
+  // that will never be repeated. Sending init again on load costs one redundant
+  // message and removes an unrecoverable state — the frame treats a second init
+  // as a config refresh, which is what the web loader already does.
+  const onLoadEnd = useCallback(
+    () => void session.handle({ type: 'algo-widget:ready' }),
+    [session],
+  );
+
   const uri = frameUrl(widget.client.host, widget.client.portal ?? { accentColor: null });
 
   return (
@@ -99,6 +111,10 @@ export function AlgoWidgetPanel({
       ref={ref}
       source={{ uri }}
       onMessage={onMessage}
+      // BEFORE the page's scripts: the frame announces `ready` as soon as React
+      // mounts, which can precede the load event.
+      injectedJavaScriptBeforeContentLoaded={frameShim('window.ReactNativeWebView.postMessage')}
+      onLoadEnd={onLoadEnd}
       javaScriptEnabled
       // The panel plays back nothing, but a voice note recorded through it is
       // reviewed in place before sending — and a gesture requirement would make

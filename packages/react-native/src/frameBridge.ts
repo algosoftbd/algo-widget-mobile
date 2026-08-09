@@ -117,11 +117,52 @@ function isRecordMode(v: unknown): v is RecordMode {
   return v === 'steps' || v === 'voice' || v === 'screen';
 }
 
+/**
+ * The bridge the frame needs in order to be heard at all.
+ *
+ * The frame posts with `window.parent.postMessage(...)` — correct, because on
+ * the web it lives in an iframe and is talking to the loader. In a WebView
+ * there is no parent: `window.parent === window`, so that call lands on
+ * `window.postMessage`, which goes nowhere a native host can see. React
+ * Native's `onMessage` only fires for `window.ReactNativeWebView.postMessage`,
+ * and Flutter's channels only fire for their own named object. Neither is what
+ * the frame calls, so without this shim NOT ONE message arrives — the panel
+ * loads, waits for an `init` that is never sent, and its Close button does
+ * nothing either.
+ *
+ * IT MUST RUN BEFORE THE PAGE'S OWN SCRIPTS. The frame announces `ready` as
+ * soon as React mounts, which can precede the load event — a shim installed on
+ * "page finished" misses it and the panel hangs forever.
+ *
+ * @param channel a JS expression that takes one string, e.g.
+ *   `window.ReactNativeWebView.postMessage` or `AlgoWidgetHost.postMessage`.
+ */
+export function frameShim(channel: string): string {
+  return `(function(){
+  if (window.__algoWidgetShim) return; window.__algoWidgetShim = true;
+  var native = function (s) { try { ${channel}(s); } catch (e) {} };
+  var original = window.postMessage.bind(window);
+  // Kept reachable so the HOST can deliver into the page without its own
+  // message being echoed straight back out through the patch.
+  window.__algoPost = original;
+  window.postMessage = function (data, origin, transfer) {
+    try { native(typeof data === 'string' ? data : JSON.stringify(data)); } catch (e) {}
+    // Still deliver in-page: the frame listens to its own messages for some
+    // flows, and swallowing them would break it in ways this shim cannot see.
+    try { return original(data, origin, transfer); } catch (e) { return undefined; }
+  };
+})();`;
+}
+
 /** JS to evaluate in the WebView to deliver one message. Serialized through
  *  `JSON.stringify` so a reporter's own text — a name with an apostrophe, a
  *  description with a newline — cannot break out of the expression. */
 export function postToFrame(message: object): string {
-  return `window.postMessage(${JSON.stringify(JSON.stringify(message))}, '*');true;`;
+  const payload = JSON.stringify(JSON.stringify(message));
+  // Prefer the un-patched function the shim stashed: going through the patched
+  // one would forward our own init straight back to us. Harmless (it parses to
+  // nothing the SDK handles) but pointless, and confusing in a log.
+  return `(window.__algoPost || window.postMessage)(${payload}, '*');true;`;
 }
 
 /** Tell the frame a staged attachment arrived, so it can show the card. Used

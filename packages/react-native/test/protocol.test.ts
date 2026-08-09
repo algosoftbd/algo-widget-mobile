@@ -16,7 +16,7 @@ import { TraceRecorder, stripQuery } from '../src/recorder.ts';
 import { CrashReporter, crashSignature, type CrashStore } from '../src/crash.ts';
 import { AlgoWidgetClient } from '../src/client.ts';
 import { elementFromProps, looksMinified } from '../src/element.ts';
-import { frameUrl, parseFrameMessage, postToFrame } from '../src/frameBridge.ts';
+import { frameShim, frameUrl, parseFrameMessage, postToFrame } from '../src/frameBridge.ts';
 import { AlgoWidget } from '../src/algoWidget.ts';
 import { PanelSession } from '../src/panelController.ts';
 import { NO_CAPTURE, capabilitiesOf, contentTypeFor, resolveNativeCapture } from '../src/capture.ts';
@@ -612,10 +612,8 @@ test("a reporter's text cannot break out of the injected expression", () => {
   // Double-encoded on purpose: the outer JSON.stringify makes the payload a
   // single JS string literal, so quotes and newlines in reporter-supplied text
   // stay data.
-  assert.ok(js.startsWith('window.postMessage("'));
   assert.ok(!js.includes('alert(1); //"'));
-  const inner = JSON.parse(js.slice('window.postMessage('.length, js.lastIndexOf(", '*')")));
-  assert.equal(JSON.parse(inner).name, `O'Brien"; alert(1); //`);
+  assert.equal(JSON.parse(injectedPayload(js)).name, `O'Brien"; alert(1); //`);
 });
 
 // ── The façade ─────────────────────────────────────────────────────────────
@@ -860,9 +858,13 @@ async function panelFixture(portal: Record<string, unknown>) {
 
 /** The payload of the Nth message the controller sent to the panel. */
 function sentPayload(sent: string[], n: number): Record<string, unknown> {
-  const js = sent[n]!;
-  const inner = JSON.parse(js.slice('window.postMessage('.length, js.lastIndexOf(", '*')")));
-  return JSON.parse(inner);
+  return JSON.parse(injectedPayload(sent[n]!));
+}
+
+/** Pull the payload out of an injected `…postMessage("…", '*')` expression
+ *  without depending on which function the shim left in front of it. */
+function injectedPayload(js: string): string {
+  return JSON.parse(js.slice(js.indexOf('("') + 1, js.lastIndexOf(", '*')")));
 }
 
 const FULL_PORTAL = {
@@ -1008,5 +1010,77 @@ test('a screenshot that fails tells the panel rather than hanging it', async () 
   });
   await session.handle({ type: 'algo-widget:snip-request' });
   assert.equal(sentPayload(sent, 0).type, 'algo-widget:snip-error');
+  widget.dispose();
+});
+
+// ── The bridge shim ────────────────────────────────────────────────────────
+// This is the bug that made a real panel hang on "Loading…" with a Close button
+// that did nothing: the frame posts with `window.parent.postMessage`, and in a
+// WebView `window.parent === window`, so nothing a native host listens to ever
+// fired.
+
+test('the shim forwards a frame message to the native channel', () => {
+  const seen: string[] = [];
+  const win: Record<string, unknown> = {
+    postMessage(data: unknown) {
+      void data;
+    },
+    ReactNativeWebView: { postMessage: (s: string) => seen.push(s) },
+  };
+  // Evaluate the shim against a stand-in window, the way the WebView would.
+  new Function('window', frameShim('window.ReactNativeWebView.postMessage'))(win);
+
+  // What the frame actually does — `window.parent` is `window` outside a frame.
+  (win.postMessage as (d: unknown, o: string) => void)({ type: 'algo-widget:ready' }, '*');
+
+  assert.equal(seen.length, 1);
+  assert.deepEqual(parseFrameMessage(seen[0]), { type: 'algo-widget:ready' });
+});
+
+test('the shim is idempotent and keeps the original reachable', () => {
+  const delivered: unknown[] = [];
+  const win: Record<string, unknown> = {
+    postMessage: (d: unknown) => delivered.push(d),
+    ReactNativeWebView: { postMessage: () => {} },
+  };
+  const shim = frameShim('window.ReactNativeWebView.postMessage');
+  new Function('window', shim)(win);
+  const afterFirst = win.postMessage;
+  new Function('window', shim)(win);
+  assert.equal(win.postMessage, afterFirst, 'a second install must not double-wrap');
+
+  // The host delivers through __algoPost so its own init is not echoed back.
+  assert.equal(typeof win.__algoPost, 'function');
+  (win.__algoPost as (d: unknown, o: string) => void)({ type: 'algo-widget:init' }, '*');
+  assert.equal(delivered.length, 1, 'still reaches the page');
+});
+
+test('the shim still delivers in-page, so the frame keeps working', () => {
+  const inPage: unknown[] = [];
+  const native: string[] = [];
+  const win: Record<string, unknown> = {
+    postMessage: (d: unknown) => inPage.push(d),
+    ReactNativeWebView: { postMessage: (s: string) => native.push(s) },
+  };
+  new Function('window', frameShim('window.ReactNativeWebView.postMessage'))(win);
+  (win.postMessage as (d: unknown, o: string) => void)({ type: 'algo-widget:close' }, '*');
+  // Both: swallowing the in-page delivery would break flows the shim cannot see.
+  assert.equal(native.length, 1);
+  assert.equal(inPage.length, 1);
+});
+
+test('postToFrame prefers the un-patched function', () => {
+  assert.ok(postToFrame({ a: 1 }).startsWith('(window.__algoPost || window.postMessage)('));
+});
+
+test('a repeated ready re-sends init rather than hanging', async () => {
+  const { session, sent, widget } = await panelFixture(FULL_PORTAL);
+  await session.handle({ type: 'algo-widget:ready' });
+  await session.handle({ type: 'algo-widget:ready' });
+  // `ready` is sent once by the frame and never repeated, so a missed one would
+  // be unrecoverable. Answering every time is what makes the load-event retry
+  // safe.
+  const types = sent.map((_, i) => sentPayload(sent, i).type);
+  assert.deepEqual(types, ['algo-widget:init', 'algo-widget:init']);
   widget.dispose();
 });

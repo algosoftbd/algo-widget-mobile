@@ -127,8 +127,34 @@ FrameMessage? parseFrameMessage(Object? raw) {
 /// newline — stays data rather than breaking out of the expression.
 String postToFrame(Map<String, Object?> message) {
   final payload = jsonEncode(jsonEncode(message));
-  return "window.postMessage($payload, '*');true;";
+  // Prefer the un-patched function the shim stashed: going through the patched
+  // one would forward our own init straight back to us.
+  return "(window.__algoPost || window.postMessage)($payload, '*');true;";
 }
+
+/// The bridge the frame needs in order to be heard at all.
+///
+/// The frame posts with `window.parent.postMessage(...)` — correct, because on
+/// the web it lives in an iframe talking to the loader. In a WebView there is
+/// no parent: `window.parent == window`, so the call lands on
+/// `window.postMessage`, which goes nowhere a native host can see. A Flutter
+/// JavaScript channel only fires for its own named object, which the frame
+/// never calls — so without this shim NOT ONE message arrives: the panel loads,
+/// waits for an `init` that is never sent, and its Close button does nothing.
+///
+/// IT MUST RUN BEFORE THE PAGE'S OWN SCRIPTS. The frame announces `ready` as
+/// soon as it mounts, which can precede the load event.
+String frameShim(String channel) => '''
+(function(){
+  if (window.__algoWidgetShim) return; window.__algoWidgetShim = true;
+  var native = function (s) { try { $channel(s); } catch (e) {} };
+  var original = window.postMessage.bind(window);
+  window.__algoPost = original;
+  window.postMessage = function (data, origin, transfer) {
+    try { native(typeof data === 'string' ? data : JSON.stringify(data)); } catch (e) {}
+    try { return original(data, origin, transfer); } catch (e) { return undefined; }
+  };
+})();''';
 
 /// The init payload. `token` is the widget ticket, and it goes to a page on the
 /// OS ORIGIN — the same trust boundary the web widget uses: the frame is ours,

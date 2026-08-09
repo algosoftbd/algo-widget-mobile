@@ -252,9 +252,8 @@ void _frameBridgeTests() {
 
     test("a reporter's text cannot break out of the injected expression", () {
       final js = postToFrame({'name': "O'Brien\"; alert(1); //"});
-      expect(js.startsWith('window.postMessage("'), isTrue);
       final inner = jsonDecode(
-        js.substring('window.postMessage('.length, js.lastIndexOf(", '*')")),
+        js.substring(js.indexOf('("') + 1, js.lastIndexOf(", '*')")),
       ) as String;
       expect((jsonDecode(inner) as Map)['name'], "O'Brien\"; alert(1); //");
     });
@@ -489,10 +488,12 @@ void _panelTests() {
       return (widget, native, session, sent);
     }
 
+    // Pull the payload out without depending on which function the shim left
+    // in front of it.
     Map<String, Object?> payload(List<String> sent, int n) {
       final js = sent[n];
       final inner = jsonDecode(
-        js.substring('window.postMessage('.length, js.lastIndexOf(", '*')")),
+        js.substring(js.indexOf('("') + 1, js.lastIndexOf(", '*')")),
       ) as String;
       return jsonDecode(inner) as Map<String, Object?>;
     }

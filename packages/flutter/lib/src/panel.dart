@@ -86,7 +86,20 @@ class _AlgoWidgetPanelState extends State<AlgoWidgetPanel> {
       )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (_) => unawaited(_installShim()),
+          // BOTH hooks, and the shim is idempotent. `onPageStarted` is the
+          // earliest this API offers, and the frame announces `ready` as soon
+          // as it mounts — installing only on "finished" misses it and the
+          // panel waits forever for an init that is never sent.
+          onPageStarted: (_) => unawaited(_installShim()),
+          onPageFinished: (_) {
+            unawaited(_installShim());
+            // A SECOND chance at init. `ready` is sent once and never repeated,
+            // so if it arrived before the bridge was listening the panel would
+            // hang unrecoverably. One redundant message removes that state; the
+            // frame treats a second init as a config refresh, exactly as the
+            // web loader already does.
+            unawaited(_session.handle({'type': 'algo-widget:ready'}));
+          },
           // The frame is served from the OS host and navigates nowhere else.
           // This is the boundary that keeps a customer's app from becoming a
           // browser if a link ever appears in the panel.
@@ -113,19 +126,8 @@ class _AlgoWidgetPanelState extends State<AlgoWidgetPanel> {
   /// Without this the frame would have to know it is in a Flutter WebView. With
   /// it, the page runs the same code it runs on the web — which is the entire
   /// reason the panel is one implementation rather than four.
-  Future<void> _installShim() => _controller.runJavaScript('''
-    (function () {
-      if (window.__algoShim) return;
-      window.__algoShim = true;
-      var post = window.postMessage.bind(window);
-      window.postMessage = function (data, origin) {
-        try {
-          AlgoWidgetHost.postMessage(typeof data === 'string' ? data : JSON.stringify(data));
-        } catch (e) {}
-        return post(data, origin);
-      };
-    })();
-  ''');
+  Future<void> _installShim() =>
+      _controller.runJavaScript(frameShim('AlgoWidgetHost.postMessage'));
 
   @override
   void dispose() {
