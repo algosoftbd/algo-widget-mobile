@@ -1,3 +1,12 @@
+# [0.2.0](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.5...flutter-v0.2.0) (2026-08-09)
+
+
+### Features
+
+* onReady, so a host can cover a blank WebView ([9661c96](https://github.com/algosoftbd/algo-widget-mobile/commit/9661c964c2a5966e7266ef53a1d2c2114e5a7a0a))
+
+
+
 ## [0.1.5](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.4...flutter-v0.1.5) (2026-08-09)
 
 
@@ -31,15 +40,6 @@
 ### Bug Fixes
 
 * the panel could not hear the frame at all ([240812c](https://github.com/algosoftbd/algo-widget-mobile/commit/240812c0b0edf7eebb7dd42daddbaf823b02e905))
-
-
-
-## [0.1.1](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.0...flutter-v0.1.1) (2026-08-09)
-
-
-### Bug Fixes
-
-* **ci:** one job per package, and tag the baselines that were published by hand ([7670d4b](https://github.com/algosoftbd/algo-widget-mobile/commit/7670d4b04d6380c10b52b06e5c15656f12e1ec0d))
 
 
 
