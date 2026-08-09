@@ -1,3 +1,12 @@
+## [0.1.4](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.3...flutter-v0.1.4) (2026-08-09)
+
+
+### Bug Fixes
+
+* **flutter:** publish the bridge fix — 0.1.3 never left the runner ([abe2d1e](https://github.com/algosoftbd/algo-widget-mobile/commit/abe2d1ed4ae12a53ca0c7ec82d4a776f994548fc))
+
+
+
 ## [0.1.3](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.2...flutter-v0.1.3) (2026-08-09)
 
 
