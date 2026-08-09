@@ -59,12 +59,33 @@ and does the rest — the same action and the same shape the AlgoSoft OS repo
 uses, with one difference this repo forces.
 
 That difference is `git-path`. Two packages sit on independent version lines, so
-the action runs **twice**, each scoped to its own directory: a commit touching
+the action runs once per package, scoped to its own directory: a commit touching
 only `packages/flutter` bumps `algo_widget` and leaves the npm package
-untouched. It runs the two steps sequentially rather than as parallel jobs,
-because both push a commit to `main` and the loser of a race gets a
-non-fast-forward — intermittently, which is the worst kind of release failure to
-diagnose.
+untouched.
+
+They are **two jobs, not two steps**, and that cost a spurious release to learn.
+The action bumps the version file *before* deciding whether there is anything to
+release, and it commits with `git add .` — so with both packages in one job, the
+package with nothing to release still had its manifest bumped, and the other
+package's release commit swept that bump up. The result was a React Native
+manifest reading `0.1.1` with no tag, no changelog and no release, buried inside
+a Flutter release commit. Separate jobs mean separate working trees.
+
+They run sequentially (`needs:`) because both push to `main` and the loser of a
+race gets a non-fast-forward — intermittently, which is the worst kind of
+release failure to diagnose.
+
+`release-count: 1` regenerates only the newest changelog section. The default is
+five, which on a package with one release means rewriting the whole file — it
+replaced a hand-written entry with a list of commit subjects. Older sections are
+history.
+
+**Tag every published version, even one published by hand.** A missing baseline
+tag is why the first automated run proposed `flutter-v0.2.0` for a package whose
+`0.1.0` was already on pub.dev: with no `flutter-v*` tag to bound from, the
+action read the entire history, found the `feat:` commits that went into `0.1.0`
+and bumped the minor. Both packages now have a `v0.1.0` tag on the commit whose
+tree was published.
 
 Write commits that say what they did, and the version follows:
 
