@@ -134,6 +134,8 @@ response, and the attachment ref.
 
 Tags are per package — `flutter-v0.1.0`, `react-native-v0.1.0`. CI checks the tag against the
 manifest before publishing, because neither npm nor pub.dev lets you replace a published version.
+Neither registry is wired up yet; [docs/RELEASING.md](docs/RELEASING.md) lists the two account
+actions that cannot be done from inside this repository.
 
 ## Licence
 

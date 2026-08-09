@@ -17,11 +17,12 @@ First release. Everything from the wire protocol up to a one-call
 - **`CrashReporter`** — per-launch, per-route and per-signature throttles,
   persistence across the dying process, and a signature that separates the same
   error on two screens while grouping one bug with its own repeats.
-- **Bindings** — `FlutterError.onError` (where a widget build failure lands, and
-  the only channel that sees it), `PlatformDispatcher.onError`, a
-  `NavigatorObserver`, lifecycle, `debugPrint`, and a `recordRequest` hook for
-  whatever HTTP client the app already uses. Each chains rather than replaces,
-  and restores exactly what it found.
+- **Bindings** — a `fetch` interceptor (recording FAILED requests only), a
+  `console` capture that records an argument's SHAPE rather than its contents,
+  `ErrorUtils` and unhandled-rejection handlers, and a navigation tracker that
+  takes a route name so it works with React Navigation, Expo Router or a
+  hand-rolled stack. Each chains rather than replaces — an app with Crashlytics
+  keeps it — and restores exactly what it found.
 - **Frame bridge** — the report panel is the same page the web widget serves, in
   a WebView. An unrecognised message is ignored rather than fatal, because the
   panel and the SDK version independently.
