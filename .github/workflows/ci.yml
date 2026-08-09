@@ -1,0 +1,177 @@
+# CI for the Algo Widget mobile SDKs.
+#
+# Four independent jobs rather than one, because the four packages have four
+# toolchains and a Gradle failure must not hide a Dart one. Each is gated on
+# paths so a Dart-only change does not spend an Android runner.
+#
+# The two jobs that RUN TESTS (dart, react-native) are the ones that matter:
+# the wire protocol, the trace recorder, the crash throttles and the redaction
+# rules all live in those two packages precisely so they can be verified without
+# a device. The native jobs compile — that is the most CI can honestly do for
+# code whose whole job is to talk to hardware.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A force-push should cancel the run it superseded rather than queue behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  react-native:
+    name: React Native (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/react-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/react-native/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+      # A published package that ships the wrong files is a bug nobody sees
+      # until an app imports it. `npm pack --dry-run` prints exactly what would
+      # be uploaded.
+      - name: Inspect the publishable tarball
+        run: npm pack --dry-run
+
+  flutter:
+    name: Flutter (Dart)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: dart analyze --fatal-infos
+      - name: Test
+        run: dart test
+      # pub.dev scores a package on documentation, platform support and
+      # dependency health. Running it in CI means the score is a thing we chose
+      # rather than a thing we discover after publishing.
+      - name: Score the package
+        run: |
+          dart pub global activate pana
+          dart pub global run pana --no-warning --exit-code-threshold 20 .
+
+  android:
+    name: Android (Kotlin)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble
+        run: gradle assembleRelease --no-daemon
+
+  ios:
+    name: iOS (Swift)
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: packages/ios
+    steps:
+      - uses: actions/checkout@v4
+      # `swift build` targets macOS and this package is iOS-only (ReplayKit,
+      # UIKit), so the real check is an xcodebuild against an iOS destination.
+      - name: Build for iOS
+        run: |
+          xcodebuild -scheme AlgoWidget \
+            -destination 'generic/platform=iOS' \
+            -skipPackagePluginValidation \
+            build
+
+  contract:
+    name: Contract parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Two SDKs implement one wire contract, and the failure mode is silence:
+      # a constant changed in Dart and not in TypeScript produces two clients
+      # that disagree, and nothing tells you until a report is refused in
+      # production. This is a cheap, exact check on the numbers that MUST match.
+      - name: The caps must agree across both SDKs
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            ts=$(grep -oE "export const $1 = [^;]+;" packages/react-native/src/protocol.ts \
+                 | grep -oE '[0-9_ *]+;' | tr -d ' _;' )
+            dart=$(grep -oE "const int $2 = [^;]+;" packages/flutter/lib/src/protocol.dart \
+                   | grep -oE '[0-9_ *]+;' | tr -d ' _;' )
+            tsv=$(( ts ))
+            dartv=$(( dart ))
+            if [ "$tsv" != "$dartv" ]; then
+              echo "::error::$1 ($tsv) and $2 ($dartv) disagree — the two SDKs would send different documents"
+              fail=1
+            else
+              echo "ok  $1 = $tsv"
+            fi
+          }
+          check TRACE_VERSION kTraceVersion
+          check CRASH_VERSION kCrashVersion
+          check TRACE_MAX_EVENTS kTraceMaxEvents
+          check TRACE_HEAD_EVENTS kTraceHeadEvents
+          check TRACE_TAIL_EVENTS kTraceTailEvents
+          check TRACE_MAX_DURATION_MS kTraceMaxDurationMs
+          check TRACE_MAX_BYTES kTraceMaxBytes
+          check TRACE_MAX_TEXT_LEN kTraceMaxTextLen
+          check TRACE_MAX_PATH_LEN kTraceMaxPathLen
+          check TRACE_MAX_MESSAGE_LEN kTraceMaxMessageLen
+          check TRACE_MAX_ATTR_LEN kTraceMaxAttrLen
+          check CRASH_MAX_CONSOLE kCrashMaxConsole
+          check CRASH_MAX_REQUESTS kCrashMaxRequests
+          check CRASH_MAX_STACK_FRAMES kCrashMaxStackFrames
+          check MAX_ATTACHMENTS kMaxAttachments
+          exit $fail
+
+  privacy:
+    name: Privacy invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The guarantees in PROTOCOL.md §6 are the reason this repository is
+      # public. A grep is a blunt instrument, but it turns "we promise the SDK
+      # never reads a field's value" from a claim in a document into something
+      # a pull request has to argue with.
+      - name: No event type carries a field value
+        run: |
+          set -euo pipefail
+          if grep -rnE "\.value|inputValue|text:.*controller|\.text\b" \
+               packages/react-native/src/recorder.ts \
+               packages/flutter/lib/src/recorder.dart; then
+            echo "::error::the recorder must never read a field's value (PROTOCOL.md §6)"
+            exit 1
+          fi
+          echo "ok  no value-reading path in either recorder"

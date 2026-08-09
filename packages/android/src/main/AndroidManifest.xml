@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Two permissions, and neither is granted by installing this library alone.
+
+  FOREGROUND_SERVICE_MEDIA_PROJECTION is required from Android 14: screen
+  capture must run in a foreground service with a visible notification. That is
+  the platform enforcing what this SDK would want anyway — a recording the user
+  cannot see running is not one they consented to.
+
+  RECORD_AUDIO is requested at runtime, and only when the reporter picks a tier
+  that includes narration.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+</manifest>

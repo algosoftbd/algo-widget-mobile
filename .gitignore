@@ -1,0 +1,18 @@
+# Build output only. NOT a bare `lib/` — that is the TypeScript package's build
+# directory AND the Flutter package's SOURCE directory, and the broad pattern
+# silently excluded every Dart file in the repository.
+packages/react-native/lib/
+node_modules/
+
+.dart_tool/
+pubspec.lock
+
+build/
+.gradle/
+local.properties
+.build/
+*.xcuserstate
+xcuserdata/
+
+*.log
+.DS_Store

@@ -1,0 +1,102 @@
+# Publishing the Algo Widget mobile SDKs.
+#
+# TAG-DRIVEN AND PER-PACKAGE. A tag names exactly one package and one version:
+#
+#     react-native-v0.1.0   → npm  @algosoft/algo-widget-react-native
+#     flutter-v0.1.0        → pub.dev  algo_widget
+#
+# One tag per package rather than one version for the repository, because the
+# four packages have four release cadences and forcing them to move together
+# would mean publishing a Dart package to fix a Kotlin bug. The wire contract is
+# what keeps them compatible, and CI's `contract` job is what keeps the contract
+# honest — a shared version number would only look like a guarantee.
+#
+# The native cores are NOT published here. Android goes to Maven and iOS is
+# consumed straight from this Git repository by SPM, so a tag is all iOS needs.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'react-native-v*'
+      - 'flutter-v*'
+
+permissions:
+  contents: read
+  # pub.dev and npm both authenticate with a short-lived OIDC token rather than
+  # a long-lived secret. There is no publish credential in this repository to
+  # leak, which matters more than usual for a repo that is public.
+  id-token: write
+
+jobs:
+  react-native:
+    if: startsWith(github.ref_name, 'react-native-v')
+    runs-on: ubuntu-latest
+    environment: release
+    defaults:
+      run:
+        working-directory: packages/react-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: packages/react-native/package-lock.json
+      - run: npm ci
+
+      # The tag is the source of truth, and a mismatch is caught BEFORE
+      # publishing rather than discovered as a wrong version on the registry —
+      # npm does not allow re-publishing a version.
+      - name: The tag and package.json must agree
+        run: |
+          tag="${GITHUB_REF_NAME#react-native-v}"
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $tag != package.json $pkg"
+            exit 1
+          fi
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  flutter:
+    if: startsWith(github.ref_name, 'flutter-v')
+    runs-on: ubuntu-latest
+    environment: release
+    defaults:
+      run:
+        working-directory: packages/flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+
+      - name: The tag and pubspec.yaml must agree
+        run: |
+          tag="${GITHUB_REF_NAME#flutter-v}"
+          pkg=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}')
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $tag != pubspec.yaml $pkg"
+            exit 1
+          fi
+
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: dart analyze --fatal-infos
+      - run: dart test
+
+      # A dry run first: pub.dev publishes are PERMANENT — a version cannot be
+      # replaced, only retracted — so the last cheap chance to catch a packaging
+      # mistake is here.
+      - name: Dry run
+        run: dart pub publish --dry-run
+      - name: Publish
+        run: dart pub publish --force
