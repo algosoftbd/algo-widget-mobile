@@ -158,7 +158,8 @@ class PanelSession {
     )));
     final who = identity;
     if (who != null && (who['name'] != null || who['email'] != null)) {
-      send(postToFrame(identityMessage(name: who['name'], email: who['email'])));
+      send(
+          postToFrame(identityMessage(name: who['name'], email: who['email'])));
     }
     send(postToFrame(recordCapabilitiesMessage(offered)));
   }
