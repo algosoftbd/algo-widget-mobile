@@ -21,6 +21,13 @@
 # finished first, which is the worst kind of failure to meet in a release
 # pipeline.
 #
+# THE CHANGELOG IS GENERATED, not written. `release-count` means "preserve N
+# releases" — it TRUNCATES rather than protects, so there is no setting that
+# keeps hand-written prose in the file. That is the tool working as designed:
+# CHANGELOG.md is a function of the commits. Prose that deserves to survive goes
+# in the GitHub release notes, which are permanent and are where a customer
+# arriving from npm or pub.dev actually reads — see the 0.1.0 releases.
+#
 # WHAT THIS WORKFLOW DOES NOT DO IS PUBLISH. It bumps, writes the changelog,
 # tags and opens a DRAFT release — and stops. Publishing is `release.yml`, run
 # deliberately against a tag, because npm and pub.dev both refuse to replace a
@@ -61,11 +68,6 @@ jobs:
           version-file: packages/react-native/package.json
           output-file: packages/react-native/CHANGELOG.md
           tag-prefix: react-native-v
-          # Regenerate only the NEWEST section. The default rewrites the last
-          # five, which on a package with one release means rewriting the whole
-          # file — and it replaced a hand-written 0.1.0 entry with a list of
-          # commit subjects. Older sections are history; leave them alone.
-          release-count: 1
           # Keeps package-lock.json's version in step with package.json's. The
           # action stages with `git add .`, so the sync lands in the same commit.
           pre-commit: ./scripts/release-pre-commit.cjs
@@ -118,7 +120,6 @@ jobs:
           version-file: packages/flutter/pubspec.yaml
           output-file: packages/flutter/CHANGELOG.md
           tag-prefix: flutter-v
-          release-count: 1
           skip-on-empty: true
 
       - name: Draft the release

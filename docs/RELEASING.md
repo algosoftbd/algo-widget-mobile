@@ -75,10 +75,13 @@ They run sequentially (`needs:`) because both push to `main` and the loser of a
 race gets a non-fast-forward — intermittently, which is the worst kind of
 release failure to diagnose.
 
-`release-count: 1` regenerates only the newest changelog section. The default is
-five, which on a package with one release means rewriting the whole file — it
-replaced a hand-written entry with a list of commit subjects. Older sections are
-history.
+**The changelog is generated, not written.** `release-count` means *preserve N
+releases* — it truncates rather than protects, so no setting keeps hand-written
+prose in the file. That is the tool working as designed: `CHANGELOG.md` is a
+function of the commits, which is why the commits are worth writing carefully.
+Prose that deserves to survive goes in the **GitHub release notes**, which are
+permanent and are what a customer arriving from npm or pub.dev actually reads —
+see the `0.1.0` releases.
 
 **Tag every published version, even one published by hand.** A missing baseline
 tag is why the first automated run proposed `flutter-v0.2.0` for a package whose
