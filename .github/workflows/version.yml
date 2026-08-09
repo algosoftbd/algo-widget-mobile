@@ -1,4 +1,4 @@
-# Versioning, changelogs, tags and draft releases — from the commits.
+# Versioning, changelogs and tags — from the commits, then hand off to publish.
 #
 # Mirrors the AlgoSoft OS repo's Release Draft workflow (same action, same
 # shape), with the one difference this repository forces: it holds TWO packages
@@ -28,10 +28,17 @@
 # in the GitHub release notes, which are permanent and are where a customer
 # arriving from npm or pub.dev actually reads — see the 0.1.0 releases.
 #
-# WHAT THIS WORKFLOW DOES NOT DO IS PUBLISH. It bumps, writes the changelog,
-# tags and opens a DRAFT release — and stops. Publishing is `release.yml`, run
-# deliberately against a tag, because npm and pub.dev both refuse to replace a
-# published version: the draft is the last place a wrong number is still free.
+# IT HANDS OFF TO `release.yml` BY DISPATCH, not by pushing a tag and hoping.
+# A tag pushed with GITHUB_TOKEN deliberately does NOT fire a `push` event —
+# GitHub's guard against a workflow triggering itself forever — so a
+# tag-triggered release would simply never run, silently. `workflow_dispatch`
+# is the documented exception to that rule, and it has a second advantage that
+# matters here: it runs AGAINST THE TAG REF, which is what pub.dev's OIDC check
+# authenticates.
+#
+# The GitHub release is created by `release.yml` AFTER the registry accepts the
+# package, not here. A release that exists before the publish succeeds is a
+# promise; one created after is a record.
 name: Version
 
 on:
@@ -46,6 +53,9 @@ concurrency:
 
 permissions:
   contents: write
+  # To dispatch release.yml. Without it the hand-off fails with a 403 that
+  # reads like a token problem rather than a missing scope.
+  actions: write
 
 jobs:
   react-native:
@@ -75,23 +85,16 @@ jobs:
           # package, and a docs change touches neither.
           skip-on-empty: true
 
-      # DRAFT, deliberately. A published release is a notification and an
-      # artifact people link to; a draft is a proposal you can still delete.
-      # Publishing is a separate manual step anyway, so the draft is where you
-      # read the generated changelog and decide the version is right.
-      - name: Draft the release
+      - name: Publish it
         if: steps.changelog.outputs.skipped == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.changelog.outputs.tag }}
-          name: ${{ steps.changelog.outputs.tag }}
-          body: ${{ steps.changelog.outputs.clean_changelog }}
-          draft: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref "${{ steps.changelog.outputs.tag }}"
 
       - name: Summary
         run: |
           if [ "${{ steps.changelog.outputs.skipped }}" = "false" ]; then
-            echo "React Native → \`${{ steps.changelog.outputs.tag }}\` (draft)" >> "$GITHUB_STEP_SUMMARY"
+            echo "React Native → \`${{ steps.changelog.outputs.tag }}\` → publishing" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "React Native — no releasable changes" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -122,21 +125,16 @@ jobs:
           tag-prefix: flutter-v
           skip-on-empty: true
 
-      - name: Draft the release
+      - name: Publish it
         if: steps.changelog.outputs.skipped == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.changelog.outputs.tag }}
-          name: ${{ steps.changelog.outputs.tag }}
-          body: ${{ steps.changelog.outputs.clean_changelog }}
-          draft: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref "${{ steps.changelog.outputs.tag }}"
 
       - name: Summary
         run: |
           if [ "${{ steps.changelog.outputs.skipped }}" = "false" ]; then
-            echo "Flutter → \`${{ steps.changelog.outputs.tag }}\` (draft)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Flutter → \`${{ steps.changelog.outputs.tag }}\` → publishing" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Flutter — no releasable changes" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Nothing is published. Run **Release** against the tag to publish." >> "$GITHUB_STEP_SUMMARY"

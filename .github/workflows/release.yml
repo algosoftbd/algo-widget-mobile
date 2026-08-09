@@ -34,7 +34,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # To create the GitHub release once the registry has accepted the package.
+  contents: write
   # pub.dev and npm both authenticate with a short-lived OIDC token rather than
   # a long-lived secret. There is no publish credential in this repository to
   # leak, which matters more than usual for a repo that is public.
@@ -81,6 +82,26 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Release notes from the changelog
+        run: |
+          # The newest section of the package's own changelog — the same text
+          # the registry listing shows, so the two cannot describe different
+          # things. From the first '## ' heading to the next one.
+          awk '/^## /{n++} n==1' CHANGELOG.md > "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          test -s "${GITHUB_WORKSPACE}/RELEASE_NOTES.md" || echo "${GITHUB_REF_NAME}" > "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+
+      # The GitHub release is created AFTER the registry accepted the package,
+      # never before. One created up front is a promise; this is a record — if
+      # publishing fails there is no release claiming otherwise, and the tag can
+      # simply be dispatched again once the cause is fixed.
+      - name: Record the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+
 
   flutter:
     if: startsWith(github.ref, 'refs/tags/flutter-v')
@@ -136,3 +157,23 @@ jobs:
         run: flutter pub publish --dry-run
       - name: Publish
         run: flutter pub publish --force
+
+      - name: Release notes from the changelog
+        run: |
+          # The newest section of the package's own changelog — the same text
+          # the registry listing shows, so the two cannot describe different
+          # things. From the first '## ' heading to the next one.
+          awk '/^## /{n++} n==1' CHANGELOG.md > "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          test -s "${GITHUB_WORKSPACE}/RELEASE_NOTES.md" || echo "${GITHUB_REF_NAME}" > "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+
+      # The GitHub release is created AFTER the registry accepted the package,
+      # never before. One created up front is a promise; this is a record — if
+      # publishing fails there is no release claiming otherwise, and the tag can
+      # simply be dispatched again once the cause is fixed.
+      - name: Record the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+

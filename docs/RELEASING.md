@@ -100,33 +100,41 @@ Write commits that say what they did, and the version follows:
 | `docs:`, `chore:`, `test:` | nothing — `skip-on-empty` keeps the workflow silent |
 
 The run bumps the manifest, writes the CHANGELOG, commits with `[skip ci]` (so
-it does not retrigger itself), tags, and opens a **draft** GitHub release
-carrying the generated notes.
+it does not retrigger itself), tags — and then **hands off to `release.yml`,
+which publishes**. Merging is the only manual act.
 
-## Publishing
+## The hand-off
 
-**Version does not publish.** Both registries refuse to replace a published
-version, so the gap between tagging and publishing is the last place a wrong
-number is still free — read the draft release, then publish deliberately:
+Version dispatches Release rather than pushing a tag and hoping, and both halves
+of that are deliberate.
+
+A tag pushed with `GITHUB_TOKEN` **does not fire a `push` event** — GitHub's
+guard against a workflow triggering itself forever. A tag-triggered release
+would therefore never run, and never say why. `workflow_dispatch` is the
+documented exception to that rule.
+
+It also has to run **against the tag ref**, which dispatch allows and a
+`workflow_run` trigger would not: pub.dev authenticates by OIDC and checks the
+ref the workflow ran *for* against its tag pattern. A run on `main` presents a
+claim that says `main`, and checking the tag out afterwards does not change what
+the token says. The jobs guard on `refs/tags/…` so a dispatch on a branch is
+refused here, with a clearer result than a registry rejection.
+
+To publish by hand — re-running a release whose first attempt failed, say:
 
 ```bash
 gh workflow run release.yml --repo algosoftbd/algo-widget-mobile \
-  --ref react-native-v0.1.1
+  --ref flutter-v0.1.2
 ```
-
-or pick the tag in the **Run workflow** ref selector.
-
-**Run it against the TAG, not against `main` with the tag as an input.** That is
-not tidiness: pub.dev authenticates the run by OIDC and checks the ref the
-workflow ran *for* against its configured tag pattern. A workflow dispatched on
-`main` presents a claim that says `main`, and checking the tag out afterwards
-does not change what the token says — pub.dev refuses it. The jobs guard on
-`refs/tags/…` so a dispatch on a branch is refused here first, with a clearer
-result than a registry rejection.
 
 The workflow re-checks the tag against the manifest before publishing, so a tag
 that disagrees with `package.json` or `pubspec.yaml` fails the run rather than
 shipping the wrong number.
+
+**The GitHub release is created after the registry accepts the package**, never
+before, and it is published rather than drafted. One created up front is a
+promise; this is a record. If publishing fails there is no release claiming
+otherwise, and the tag can simply be dispatched again once the cause is fixed.
 
 ## Before the first release
 
