@@ -57,6 +57,7 @@ class PanelSession {
     this.onSubmitted,
     this.onHeight,
     this.onFullscreen,
+    this.onReady,
   });
 
   final AlgoWidget widget;
@@ -76,7 +77,25 @@ class PanelSession {
   final void Function(int height)? onHeight;
   final void Function({required bool on})? onFullscreen;
 
+  /// The panel is live — initialised, and about to render a form.
+  ///
+  /// A WebView is blank while it loads, and on a phone that blank is the whole
+  /// screen: pressing "Report a problem" appeared to do nothing for a moment,
+  /// then a spinner appeared inside the page, then the form. This package draws
+  /// no loading state for you — it imports no UI — but it can tell you exactly
+  /// when to take yours down.
+  ///
+  /// Fires ONCE per session, after init has gone across — not on `ready`, which
+  /// the panel answers again on load and which says only that the document
+  /// exists. A session with no ticket never fires it at all: there is nothing
+  /// to reveal.
+  final void Function()? onReady;
+
   String? _mode;
+
+  /// `onReady` is a "take your loading state down" signal, and taking it down
+  /// twice is not a thing. The frame answers `ready` again on load.
+  bool _announced = false;
 
   /// True while a recording is running — the host drives ticks only then.
   bool get recording => _mode != null;
@@ -167,6 +186,10 @@ class PanelSession {
       offered,
       snip: native != null && widget.capabilities.canScreenshot,
     )));
+    if (!_announced) {
+      _announced = true;
+      onReady?.call();
+    }
   }
 
   /// NOTE ON `algo-widget:attached`, sent here and from [_stop]: THE FRAME DOES
