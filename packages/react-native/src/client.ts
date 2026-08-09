@@ -80,6 +80,12 @@ export class AlgoWidgetClient {
     return this.ticket?.portal ?? null;
   }
 
+  /** The OS host, normalized. The panel needs it to build the frame URL, and
+   *  reading it back beats making every caller keep its own copy in sync. */
+  get host(): string {
+    return this.opts.host;
+  }
+
   /** One round trip. Exposed so the exchange can be driven step by step in
    *  tests; ordinary callers want `session()`. */
   async requestSession(challenge?: string, attestation?: string): Promise<SessionResult> {

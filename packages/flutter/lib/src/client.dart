@@ -332,7 +332,11 @@ class AlgoWidgetClient {
           ..files.add(
               http.MultipartFile.fromBytes('files', bytes, filename: filename));
     try {
-      final streamed = await request.send();
+      // `request.send()` would spin up its OWN http.Client and quietly bypass
+      // the one this class was given — so an app that supplied a client with a
+      // proxy, certificate pinning or its own interceptors would have all of
+      // that ignored for uploads, and only for uploads. Send it through ours.
+      final streamed = await _http.send(request);
       final res = await http.Response.fromStream(streamed);
       if (res.statusCode != 200) {
         _dropped(filename, 'upload failed (${res.statusCode})');

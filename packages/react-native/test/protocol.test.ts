@@ -18,6 +18,7 @@ import { AlgoWidgetClient } from '../src/client.ts';
 import { elementFromProps, looksMinified } from '../src/element.ts';
 import { frameUrl, parseFrameMessage, postToFrame } from '../src/frameBridge.ts';
 import { AlgoWidget } from '../src/algoWidget.ts';
+import { PanelSession } from '../src/panelController.ts';
 import { NO_CAPTURE, capabilitiesOf, contentTypeFor, resolveNativeCapture } from '../src/capture.ts';
 import {
   bindAll,
@@ -778,4 +779,234 @@ test('the declared content type follows the extension the native side produced',
   assert.equal(contentTypeFor('screen.mov'), 'video/quicktime');
   assert.equal(contentTypeFor('shot.png'), 'image/png');
   assert.equal(contentTypeFor('mystery.bin'), 'application/octet-stream');
+});
+
+// ── The report panel ───────────────────────────────────────────────────────
+
+function fakeNative(overrides: Record<string, unknown> = {}) {
+  const calls: string[] = [];
+  const native = {
+    calls,
+    info: async () => ({
+      canScreenshot: true,
+      canRecordVoice: true,
+      canRecordScreen: true,
+      wholeDevice: true,
+    }),
+    screenshot: async () => {
+      calls.push('screenshot');
+      return '/tmp/shot-1.png';
+    },
+    startVoice: async () => {
+      calls.push('startVoice');
+      return '/tmp/voice-1.m4a';
+    },
+    stopVoice: async () => {
+      calls.push('stopVoice');
+      return '/tmp/voice-1.m4a';
+    },
+    startScreen: async () => {
+      calls.push('startScreen');
+    },
+    stopScreen: async () => {
+      calls.push('stopScreen');
+      return '/tmp/screen-1.mp4';
+    },
+    purge: async () => {
+      calls.push('purge');
+    },
+    ...overrides,
+  };
+  return native;
+}
+
+async function panelFixture(portal: Record<string, unknown>) {
+  const sent: string[] = [];
+  const native = fakeNative();
+  const widget = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    native: native as never,
+    fetch: (async (url: string) => {
+      if (String(url).endsWith('/session')) {
+        return new Response(
+          JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal }),
+          { status: 200 },
+        );
+      }
+      if (String(url).endsWith('/files')) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            uploaded: [{ fileId: 'f1', filename: 'x', kind: 'trace' }],
+            rejected: [],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  const session = new PanelSession({
+    widget,
+    native: native as never,
+    readFile: async () => new Uint8Array([1, 2, 3]),
+    send: (js) => sent.push(js),
+  });
+  return { widget, native, session, sent };
+}
+
+/** The payload of the Nth message the controller sent to the panel. */
+function sentPayload(sent: string[], n: number): Record<string, unknown> {
+  const js = sent[n]!;
+  const inner = JSON.parse(js.slice('window.postMessage('.length, js.lastIndexOf(", '*')")));
+  return JSON.parse(inner);
+}
+
+const FULL_PORTAL = {
+  recordingEnabled: true,
+  recordingModes: ['steps', 'voice', 'screen'],
+  recordingMaxSeconds: 60,
+  crashCapture: true,
+};
+
+test('the panel is initialised with the ticket, so it can submit', async () => {
+  const { session, sent, widget } = await panelFixture(FULL_PORTAL);
+  await session.handle({ type: 'algo-widget:ready' });
+  const init = sentPayload(sent, 0);
+  // The ticket crosses to a page on the OS ORIGIN — never into the customer's
+  // own JavaScript, which is the same boundary the web widget uses.
+  assert.equal(init.token, 'tk');
+  assert.equal(init.type, 'algo-widget:init');
+  widget.dispose();
+});
+
+test('the panel is offered our tiers, not the portal’s raw list', async () => {
+  const sent: string[] = [];
+  const widget = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    // No microphone on this device.
+    native: {
+      info: async () => ({
+        canScreenshot: true,
+        canRecordVoice: false,
+        canRecordScreen: false,
+        wholeDevice: false,
+      }),
+    } as never,
+    fetch: (async () =>
+      new Response(JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal: FULL_PORTAL }), {
+        status: 200,
+      })) as unknown as typeof fetch,
+  });
+  const session = new PanelSession({
+    widget,
+    native: null,
+    readFile: async () => new Uint8Array(),
+    send: (js) => sent.push(js),
+  });
+  await session.handle({ type: 'algo-widget:ready' });
+  const portal = sentPayload(sent, 0).portal as Record<string, unknown>;
+  assert.deepEqual(portal.recordingModes, ['steps']);
+  widget.dispose();
+});
+
+test('cancel discards the trace AND purges the bytes, before the panel is told', async () => {
+  const { session, native, sent, widget } = await panelFixture(FULL_PORTAL);
+  await session.handle({ type: 'algo-widget:ready' });
+  await session.handle({ type: 'algo-widget:record-start', mode: 'screen' });
+  widget.recorder.tap({ testid: 'a' });
+  await session.handle({ type: 'algo-widget:record-stop', cancel: true });
+
+  // The promise a reporter is entitled to believe: nothing left the phone, and
+  // nothing stayed on it.
+  assert.ok(native.calls.includes('stopScreen'), 'the capture is stopped first');
+  assert.ok(native.calls.includes('purge'), 'and the local bytes are deleted');
+  assert.equal(widget.recorder.build().events.length, 0);
+  const last = sentPayload(sent, sent.length - 1);
+  assert.equal(last.type, 'algo-widget:record-cancelled');
+  widget.dispose();
+});
+
+test('closing mid-recording is a cancel, not a pause', async () => {
+  const { widget, native } = await panelFixture(FULL_PORTAL);
+  let closed = false;
+  // ONE session per panel presentation — the recording state lives on it, so
+  // the close has to reach the session that started the recording.
+  const session = new PanelSession({
+    widget,
+    native: native as never,
+    readFile: async () => new Uint8Array(),
+    send: () => {},
+    onClose: () => {
+      closed = true;
+    },
+  });
+  await session.handle({ type: 'algo-widget:record-start', mode: 'voice' });
+  assert.equal(session.recording, true);
+
+  await session.handle({ type: 'algo-widget:close' });
+  assert.equal(closed, true);
+  assert.equal(session.recording, false);
+  // Leaving a capture running would keep the platform's recording indicator on
+  // with nothing left to stop it.
+  assert.ok(native.calls.includes('stopVoice'));
+  assert.ok(native.calls.includes('purge'));
+  widget.dispose();
+});
+
+test('a finished recording stages the trace and the media', async () => {
+  const { session, sent, widget } = await panelFixture(FULL_PORTAL);
+  await session.handle({ type: 'algo-widget:ready' });
+  await session.handle({ type: 'algo-widget:record-start', mode: 'voice' });
+  await session.handle({ type: 'algo-widget:record-stop', cancel: false });
+  const kinds = sent.map((_, i) => sentPayload(sent, i).type);
+  assert.ok(kinds.includes('algo-widget:attached'), 'the evidence reaches the panel');
+  assert.equal(kinds[kinds.length - 1], 'algo-widget:record-result');
+  widget.dispose();
+});
+
+test('a tier this device cannot do is refused rather than started', async () => {
+  const sent: string[] = [];
+  const widget = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    native: { info: async () => NO_CAPTURE } as never,
+    fetch: (async () =>
+      new Response(JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal: FULL_PORTAL }), {
+        status: 200,
+      })) as unknown as typeof fetch,
+  });
+  const session = new PanelSession({
+    widget,
+    native: null,
+    readFile: async () => new Uint8Array(),
+    send: (js) => sent.push(js),
+  });
+  // A stale panel, or a permission revoked since init, is exactly this case.
+  await session.handle({ type: 'algo-widget:record-start', mode: 'screen' });
+  assert.equal(sentPayload(sent, 0).type, 'algo-widget:record-error');
+  assert.equal(session.recording, false);
+  widget.dispose();
+});
+
+test('a screenshot that fails tells the panel rather than hanging it', async () => {
+  const { widget, native } = await panelFixture(FULL_PORTAL);
+  const sent: string[] = [];
+  const session = new PanelSession({
+    widget,
+    native: { ...native, screenshot: async () => null } as never,
+    readFile: async () => new Uint8Array(),
+    send: (js) => sent.push(js),
+  });
+  await session.handle({ type: 'algo-widget:snip-request' });
+  assert.equal(sentPayload(sent, 0).type, 'algo-widget:snip-error');
+  widget.dispose();
 });

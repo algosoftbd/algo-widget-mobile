@@ -10,5 +10,6 @@ export 'src/bindings.dart';
 export 'src/client.dart';
 export 'src/crash.dart';
 export 'src/frame_bridge.dart';
+export 'src/panel_controller.dart';
 export 'src/protocol.dart';
 export 'src/recorder.dart';

@@ -73,3 +73,4 @@ export {
   type CaptureInfo,
   type NativeCapture,
 } from './capture.ts';
+export { PanelSession, TICK_MS, type PanelDeps } from './panelController.ts';

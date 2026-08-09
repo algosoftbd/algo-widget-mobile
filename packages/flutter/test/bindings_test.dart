@@ -190,6 +190,7 @@ void main() {
 
   _frameBridgeTests();
   _facadeTests();
+  _panelTests();
 
   group('bindAll', () {
     test('returns one teardown, and it is idempotent', () {
@@ -390,6 +391,211 @@ void _facadeTests() {
       expect(crashPosts, 1);
       expect(store.items, isEmpty);
       w.dispose();
+    });
+  });
+}
+
+// ── The report panel ───────────────────────────────────────────────────────
+class _FakeNative implements NativeCapture {
+  final List<String> calls = [];
+  String? shot = '/tmp/shot-1.png';
+
+  @override
+  Future<String?> screenshot() async {
+    calls.add('screenshot');
+    return shot;
+  }
+
+  @override
+  Future<String?> startVoice() async {
+    calls.add('startVoice');
+    return '/tmp/voice-1.m4a';
+  }
+
+  @override
+  Future<String?> stopVoice() async {
+    calls.add('stopVoice');
+    return '/tmp/voice-1.m4a';
+  }
+
+  @override
+  Future<void> startScreen({required bool withMicrophone}) async =>
+      calls.add('startScreen');
+
+  @override
+  Future<String?> stopScreen() async {
+    calls.add('stopScreen');
+    return '/tmp/screen-1.mp4';
+  }
+
+  @override
+  Future<void> purge() async => calls.add('purge');
+}
+
+const _fullPortal = {
+  'recordingEnabled': true,
+  'recordingModes': ['steps', 'voice', 'screen'],
+  'recordingMaxSeconds': 60,
+  'crashCapture': true,
+};
+
+void _panelTests() {
+  group('panel', () {
+    Future<(AlgoWidget, _FakeNative, PanelSession, List<String>)> fixture({
+      Map<String, Object?> portal = _fullPortal,
+      CaptureInfo capabilities = const CaptureInfo(
+        canScreenshot: true,
+        canRecordVoice: true,
+        canRecordScreen: true,
+      ),
+    }) async {
+      final sent = <String>[];
+      final native = _FakeNative();
+      final widget = await AlgoWidget.init(
+        host: 'https://os.example.com',
+        portalKey: 'pk_abc',
+        platform: AlgoPlatform.android,
+        appId: 'com.acme.orders',
+        capabilities: capabilities,
+        httpClient: _StubClient((req, body) {
+          if (req.url.path.endsWith('/session')) {
+            return http.Response(
+              jsonEncode(
+                  {'token': 'tk', 'exp': 9999999999999, 'portal': portal}),
+              200,
+            );
+          }
+          if (req.url.path.endsWith('/files')) {
+            return http.Response(
+              jsonEncode({
+                'ok': true,
+                'uploaded': [
+                  {'fileId': 'f1', 'filename': 'x', 'kind': 'trace'}
+                ],
+                'rejected': <Object?>[],
+              }),
+              200,
+            );
+          }
+          return http.Response('{}', 200);
+        }),
+      );
+      final session = PanelSession(
+        widget: widget,
+        native: native,
+        readFile: (_) async => Uint8List.fromList([1, 2, 3]),
+        send: sent.add,
+      );
+      return (widget, native, session, sent);
+    }
+
+    Map<String, Object?> payload(List<String> sent, int n) {
+      final js = sent[n];
+      final inner = jsonDecode(
+        js.substring('window.postMessage('.length, js.lastIndexOf(", '*')")),
+      ) as String;
+      return jsonDecode(inner) as Map<String, Object?>;
+    }
+
+    test('is initialised with the ticket, so it can submit', () async {
+      final (widget, _, session, sent) = await fixture();
+      await session.handle({'type': 'algo-widget:ready'});
+      // The ticket crosses to a page on the OS ORIGIN — never into the
+      // customer's own code, the same boundary the web widget uses.
+      expect(payload(sent, 0)['token'], 'tk');
+      widget.dispose();
+    });
+
+    test('is offered our tiers, not the portal’s raw list', () async {
+      final (widget, _, session, sent) = await fixture(
+        capabilities: const CaptureInfo(canScreenshot: true),
+      );
+      await session.handle({'type': 'algo-widget:ready'});
+      final portal = payload(sent, 0)['portal']! as Map<String, Object?>;
+      expect(portal['recordingModes'], ['steps']);
+      widget.dispose();
+    });
+
+    test('cancel stops the capture, discards the trace AND purges', () async {
+      final (widget, native, session, sent) = await fixture();
+      await session
+          .handle({'type': 'algo-widget:record-start', 'mode': 'screen'});
+      widget.recorder.tap(el: const TraceElement(testid: 'a'));
+      await session.handle({'type': 'algo-widget:record-stop', 'cancel': true});
+
+      // The promise a reporter is entitled to believe: nothing left the phone,
+      // and nothing stayed on it.
+      expect(native.calls, contains('stopScreen'));
+      expect(native.calls, contains('purge'));
+      expect((widget.recorder.build()['events']! as List<Object?>), isEmpty);
+      expect(payload(sent, sent.length - 1)['type'],
+          'algo-widget:record-cancelled');
+      widget.dispose();
+    });
+
+    test('closing mid-recording is a cancel, not a pause', () async {
+      final fx = await fixture();
+      final widget = fx.$1;
+      final native = fx.$2;
+      var closed = false;
+      final session = PanelSession(
+        widget: widget,
+        native: native,
+        readFile: (_) async => Uint8List(0),
+        send: (_) {},
+        onClose: () => closed = true,
+      );
+      await session
+          .handle({'type': 'algo-widget:record-start', 'mode': 'voice'});
+      expect(session.recording, isTrue);
+      await session.handle({'type': 'algo-widget:close'});
+      expect(closed, isTrue);
+      expect(session.recording, isFalse);
+      expect(native.calls, contains('stopVoice'));
+      widget.dispose();
+    });
+
+    test('a finished recording stages the trace and the media', () async {
+      final (widget, _, session, sent) = await fixture();
+      await session
+          .handle({'type': 'algo-widget:record-start', 'mode': 'voice'});
+      await session
+          .handle({'type': 'algo-widget:record-stop', 'cancel': false});
+      final types = [
+        for (var i = 0; i < sent.length; i++) payload(sent, i)['type'],
+      ];
+      expect(types, contains('algo-widget:attached'));
+      expect(types.last, 'algo-widget:record-result');
+      widget.dispose();
+    });
+
+    test('a tier this device cannot do is refused rather than started',
+        () async {
+      final (widget, _, session, sent) = await fixture(
+        capabilities: const CaptureInfo(canScreenshot: true),
+      );
+      // A stale panel, or a permission revoked since init, is exactly this case.
+      await session
+          .handle({'type': 'algo-widget:record-start', 'mode': 'screen'});
+      expect(payload(sent, 0)['type'], 'algo-widget:record-error');
+      expect(session.recording, isFalse);
+      widget.dispose();
+    });
+
+    test('a screenshot that fails tells the panel rather than hanging it',
+        () async {
+      final (widget, native, session, sent) = await fixture();
+      native.shot = null;
+      await session.handle({'type': 'algo-widget:snip-request'});
+      expect(payload(sent, 0)['type'], 'algo-widget:snip-error');
+      widget.dispose();
+    });
+
+    test('the declared content type follows the extension', () {
+      expect(contentTypeFor('voice-1.m4a'), 'audio/mp4');
+      expect(contentTypeFor('screen.mov'), 'video/quicktime');
+      expect(contentTypeFor('shot.png'), 'image/png');
+      expect(contentTypeFor('mystery.bin'), 'application/octet-stream');
     });
   });
 }
