@@ -16,6 +16,7 @@ import { TraceRecorder, stripQuery } from '../src/recorder.ts';
 import { CrashReporter, crashSignature, type CrashStore } from '../src/crash.ts';
 import { AlgoWidgetClient } from '../src/client.ts';
 import { elementFromProps, looksMinified } from '../src/element.ts';
+import { frameUrl, parseFrameMessage, postToFrame } from '../src/frameBridge.ts';
 import {
   bindAll,
   bindConsole,
@@ -558,4 +559,58 @@ test('bindAll returns one teardown that restores everything', () => {
   assert.equal(globalThis.fetch, originalFetch);
   assert.doesNotThrow(() => unbind(), 'teardown is idempotent');
   assert.equal(console.error, originalError);
+});
+
+// ── The frame bridge ───────────────────────────────────────────────────────
+// The panel is the SAME page the web widget serves. These assert the half of
+// the conversation the SDK owns — and, mostly, that it survives a panel newer
+// than itself.
+
+test('an unrecognised message is ignored, not fatal', () => {
+  // The frame and the SDK version independently: a panel newer than the app
+  // WILL send messages this build has never heard of.
+  assert.equal(parseFrameMessage({ type: 'algo-widget:teleport' }), null);
+  assert.equal(parseFrameMessage({ type: 'something-else' }), null);
+  assert.equal(parseFrameMessage('not json'), null);
+  assert.equal(parseFrameMessage(null), null);
+  assert.equal(parseFrameMessage(42), null);
+});
+
+test('messages arrive as strings from a WebView and parse the same', () => {
+  assert.deepEqual(parseFrameMessage(JSON.stringify({ type: 'algo-widget:ready' })), {
+    type: 'algo-widget:ready',
+  });
+  assert.deepEqual(parseFrameMessage('{"type":"algo-widget:size","height":412.6}'), {
+    type: 'algo-widget:size',
+    height: 413,
+  });
+});
+
+test('a malformed known message is rejected rather than half-read', () => {
+  // A size with no height would resize the panel to NaN.
+  assert.equal(parseFrameMessage({ type: 'algo-widget:size' }), null);
+  assert.equal(parseFrameMessage({ type: 'algo-widget:record-start', mode: 'video' }), null);
+  assert.deepEqual(parseFrameMessage({ type: 'algo-widget:record-start', mode: 'screen' }), {
+    type: 'algo-widget:record-start',
+    mode: 'screen',
+  });
+});
+
+test('the frame URL carries the accent so the first paint is the right colour', () => {
+  assert.equal(
+    frameUrl('https://os.example.com/', { accentColor: '#c62828' }),
+    'https://os.example.com/widget/frame?accent=%23c62828',
+  );
+  assert.equal(frameUrl('https://os.example.com', { accentColor: null }), 'https://os.example.com/widget/frame');
+});
+
+test("a reporter's text cannot break out of the injected expression", () => {
+  const js = postToFrame({ type: 'x', name: `O'Brien"; alert(1); //`, note: 'line\nbreak' });
+  // Double-encoded on purpose: the outer JSON.stringify makes the payload a
+  // single JS string literal, so quotes and newlines in reporter-supplied text
+  // stay data.
+  assert.ok(js.startsWith('window.postMessage("'));
+  assert.ok(!js.includes('alert(1); //"'));
+  const inner = JSON.parse(js.slice('window.postMessage('.length, js.lastIndexOf(", '*')")));
+  assert.equal(JSON.parse(inner).name, `O'Brien"; alert(1); //`);
 });

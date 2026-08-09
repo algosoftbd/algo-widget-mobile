@@ -75,10 +75,11 @@ jobs:
         working-directory: packages/flutter
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
         with:
-          sdk: stable
-      - run: dart pub get
+          channel: stable
+          cache: true
+      - run: flutter pub get
 
       - name: The tag and pubspec.yaml must agree
         run: |
@@ -90,13 +91,13 @@ jobs:
           fi
 
       - run: dart format --output=none --set-exit-if-changed .
-      - run: dart analyze --fatal-infos
-      - run: dart test
+      - run: flutter analyze --fatal-infos
+      - run: flutter test
 
       # A dry run first: pub.dev publishes are PERMANENT — a version cannot be
       # replaced, only retracted — so the last cheap chance to catch a packaging
       # mistake is here.
       - name: Dry run
-        run: dart pub publish --dry-run
+        run: flutter pub publish --dry-run
       - name: Publish
-        run: dart pub publish --force
+        run: flutter pub publish --force

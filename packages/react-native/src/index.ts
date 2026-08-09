@@ -52,3 +52,14 @@ export {
   type Sinks,
   type Unbind,
 } from './bindings.ts';
+export {
+  attachmentMessage,
+  frameUrl,
+  parseFrameMessage,
+  postToFrame,
+  recordResult,
+  recordTick,
+  type FrameInit,
+  type FrameMessage,
+  type RecordMode,
+} from './frameBridge.ts';

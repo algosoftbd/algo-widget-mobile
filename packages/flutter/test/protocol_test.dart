@@ -8,7 +8,7 @@ import 'dart:convert';
 
 import 'package:algo_widget/algo_widget.dart';
 import 'package:http/http.dart' as http;
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 http.Client stubClient(
   http.Response Function(http.BaseRequest request, String body) handler,

@@ -4,6 +4,7 @@
 // crash reporter are pure Dart on purpose, so they can be exercised in a test
 // or a script rather than only on a device.
 import 'package:algo_widget/algo_widget.dart';
+import 'package:flutter/foundation.dart';
 
 Future<void> main() async {
   // 1. A session. On Android this is a two-call exchange under the hood — the
@@ -47,13 +48,13 @@ Future<void> main() async {
 
   // 3. Stage the trace, then file the report.
   final staged = await client.stageTrace(recorder.stop());
-  final issueId = await client.report(
+  await client.report(
     description: 'Saving an order shows a spinner forever.',
     route: '/orders/42',
     name: 'Jane Doe',
     attachments: [if (staged != null) staged],
   );
-  print('filed $issueId');
+  debugPrint('filed \$issueId');
 
   client.close();
 }

@@ -1,10 +1,9 @@
 # CI for the Algo Widget mobile SDKs.
 #
-# Four independent jobs rather than one, because the four packages have four
-# toolchains and a Gradle failure must not hide a Dart one. Each is gated on
-# paths so a Dart-only change does not spend an Android runner.
+# Six independent jobs rather than one, because the four packages have four
+# toolchains and a Gradle failure must not hide a Dart one.
 #
-# The two jobs that RUN TESTS (dart, react-native) are the ones that matter:
+# The two jobs that RUN TESTS (flutter, react-native) are the ones that matter:
 # the wire protocol, the trace recorder, the crash throttles and the redaction
 # rules all live in those two packages precisely so they can be verified without
 # a device. The native jobs compile — that is the most CI can honestly do for
@@ -60,23 +59,29 @@ jobs:
         working-directory: packages/flutter
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      # The Flutter SDK, not just Dart: the bindings hook FlutterError.onError,
+      # PlatformDispatcher.onError and NavigatorObserver, which is the whole
+      # point of them — those are the channels a Flutter app's failures actually
+      # arrive on, and none of them exist in pure Dart.
+      - uses: subosito/flutter-action@v2
         with:
-          sdk: stable
-      - run: dart pub get
+          channel: stable
+          cache: true
+      - run: flutter pub get
       - name: Verify formatting
         run: dart format --output=none --set-exit-if-changed .
       - name: Analyze
-        run: dart analyze --fatal-infos
+        run: flutter analyze --fatal-infos
       - name: Test
-        run: dart test
-      # pub.dev scores a package on documentation, platform support and
-      # dependency health. Running it in CI means the score is a thing we chose
-      # rather than a thing we discover after publishing.
+        run: flutter test
+      # A gate rather than a report: the package scores 160/160 today, and every
+      # point it can lose is a missing FILE (README, CHANGELOG, LICENSE,
+      # example) rather than a judgement call. Zero tolerance is therefore
+      # meaningful instead of annoying.
       - name: Score the package
         run: |
           dart pub global activate pana
-          dart pub global run pana --no-warning --exit-code-threshold 20 .
+          dart pub global run pana --no-warning --exit-code-threshold 0 .
 
   android:
     name: Android (Kotlin)
