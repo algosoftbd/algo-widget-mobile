@@ -8,9 +8,10 @@ Reports land in [AlgoSoft OS](https://github.com/algosoftbd) as first-class issu
 existing pipeline: transcription → reproduction steps → AI triage → a card on the right Discord
 channel → a manager accepts → Algo AI implements → draft PR.
 
-> **Status: early.** The wire protocol, the interaction recorder, the crash reporter and the client
-> for both Flutter and React Native are implemented and tested. The native capture layers
-> (screen, voice, screenshot) are scaffolded and need device work. See [Status](#status).
+> **Status: usable, not finished.** Both SDKs are complete and tested from the wire protocol up to a
+> one-call `AlgoWidget.init(...)` — session, trace, crash capture, framework bindings and the report
+> panel's bridge. What still needs device work is the native capture layer (screen, voice,
+> screenshot) and the WebView host that presents the panel. See [Status](#status).
 
 | package | language | install |
 |---|---|---|
@@ -93,17 +94,20 @@ SDK into evidence. An SDK that is only initialised still files reports; they jus
 
 ## Status
 
-| | state |
-|---|---|
-| wire protocol (session, challenge, staging, report, crash) | **implemented, tested** |
-| interaction recorder (events, retention, clock, redaction) | **implemented, tested** |
-| crash reporter (throttles, persistence, signature) | **implemented, tested** |
-| element ladder | **implemented, tested** |
-| React Native bindings — fetch/console/crash/navigation | **implemented, tested** |
-| Flutter navigation / Dio interceptor bindings | in progress |
-| screen recording, voice, screenshot (native) | scaffolded — needs device work |
-| WebView report UI host | scaffolded |
-| iOS App Attest | **blocked on server support**; use `attestation: 'off'` for internal builds |
+| | React Native | Flutter |
+|---|---|---|
+| wire protocol (session, challenge, staging, report, crash) | **done** | **done** |
+| interaction recorder (events, retention, clock, redaction) | **done** | **done** |
+| crash reporter (throttles, persistence, signature) | **done** | **done** |
+| element ladder | **done** | **done** |
+| bindings (network, logs, crashes, navigation, lifecycle) | **done** | **done** |
+| report-panel bridge | **done** | **done** |
+| `AlgoWidget.init(...)` façade | **done** | **done** |
+| native capture (screen, voice, screenshot) | interface + Kotlin/Swift core; needs device work | as RN |
+| WebView host presenting the panel | bridge done, widget pending | bridge done, widget pending |
+| iOS App Attest | **blocked on server support** — use `attestation: 'off'` for internal builds | |
+
+89 tests across the two (47 TypeScript, 42 Dart), none of which needs a device.
 
 Two SDKs implement one contract, so CI runs a **contract parity** job that fails if a cap or a
 version constant disagrees between Dart and TypeScript — the failure mode is otherwise silent.

@@ -5,6 +5,7 @@
 /// https://github.com/algosoftbd/algo-widget-mobile/blob/main/docs/PROTOCOL.md
 library;
 
+export 'src/algo_widget_base.dart';
 export 'src/bindings.dart';
 export 'src/client.dart';
 export 'src/crash.dart';

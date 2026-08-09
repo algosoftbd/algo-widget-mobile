@@ -63,3 +63,13 @@ export {
   type FrameMessage,
   type RecordMode,
 } from './frameBridge.ts';
+export { AlgoWidget, type InitOptions } from './algoWidget.ts';
+export {
+  NO_CAPTURE,
+  capabilitiesOf,
+  contentTypeFor,
+  resolveNativeCapture,
+  stageCaptured,
+  type CaptureInfo,
+  type NativeCapture,
+} from './capture.ts';

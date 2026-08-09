@@ -17,6 +17,8 @@ import { CrashReporter, crashSignature, type CrashStore } from '../src/crash.ts'
 import { AlgoWidgetClient } from '../src/client.ts';
 import { elementFromProps, looksMinified } from '../src/element.ts';
 import { frameUrl, parseFrameMessage, postToFrame } from '../src/frameBridge.ts';
+import { AlgoWidget } from '../src/algoWidget.ts';
+import { NO_CAPTURE, capabilitiesOf, contentTypeFor, resolveNativeCapture } from '../src/capture.ts';
 import {
   bindAll,
   bindConsole,
@@ -613,4 +615,167 @@ test("a reporter's text cannot break out of the injected expression", () => {
   assert.ok(!js.includes('alert(1); //"'));
   const inner = JSON.parse(js.slice('window.postMessage('.length, js.lastIndexOf(", '*')")));
   assert.equal(JSON.parse(inner).name, `O'Brien"; alert(1); //`);
+});
+
+// ── The façade ─────────────────────────────────────────────────────────────
+// The property that matters most: init NEVER throws. An SDK that can break a
+// customer's launch path is not one they can ship.
+
+function sessionStub(portal: Record<string, unknown> | null) {
+  return (async (url: string) => {
+    if (!String(url).endsWith('/session')) {
+      return new Response(JSON.stringify({ issueId: 'i1' }), { status: 200 });
+    }
+    if (!portal) return new Response(JSON.stringify({ error: 'unknown portal' }), { status: 404 });
+    return new Response(
+      JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+}
+
+test('init survives a portal that refuses us, and reports itself unavailable', async () => {
+  const w = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    native: null,
+    fetch: sessionStub(null),
+  });
+  assert.equal(w.available, false, 'the host should hide its report entry point');
+  assert.deepEqual(w.offeredModes, []);
+  w.dispose();
+});
+
+test('init survives a network that is down', async () => {
+  const w = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'ios',
+    appId: 'com.acme.orders',
+    native: null,
+    fetch: (async () => {
+      throw new Error('offline');
+    }) as unknown as typeof fetch,
+  });
+  assert.equal(w.available, false);
+  w.dispose();
+});
+
+test('the offered tiers are the portal ANDed with the device', async () => {
+  const w = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    // The portal offers all three; this device has a microphone but cannot
+    // record the screen.
+    native: {
+      info: async () => ({
+        canScreenshot: true,
+        canRecordVoice: true,
+        canRecordScreen: false,
+        wholeDevice: false,
+      }),
+    } as never,
+    fetch: sessionStub({
+      recordingEnabled: true,
+      recordingModes: ['steps', 'voice', 'screen'],
+      recordingMaxSeconds: 120,
+      crashCapture: true,
+    }),
+  });
+  // Never offer a tier that will fail the moment it is pressed — the reporter
+  // has already decided to spend the effort by then.
+  assert.deepEqual(w.offeredModes, ['steps', 'voice']);
+  assert.equal(w.recorder.remainingMs, 120_000, "the portal's cap drives the countdown");
+  w.dispose();
+});
+
+test('a portal with recording off offers nothing, whatever the device can do', async () => {
+  const w = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    native: {
+      info: async () => ({
+        canScreenshot: true,
+        canRecordVoice: true,
+        canRecordScreen: true,
+        wholeDevice: true,
+      }),
+    } as never,
+    fetch: sessionStub({ recordingEnabled: false, recordingModes: ['steps'], crashCapture: true }),
+  });
+  assert.deepEqual(w.offeredModes, []);
+  w.dispose();
+});
+
+test('crash capture is off without a store rather than pretending', async () => {
+  const w = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    native: null,
+    fetch: sessionStub({ recordingEnabled: false, recordingModes: [], crashCapture: true }),
+  });
+  // Reports built on a dying process with nowhere to go are lost reports.
+  assert.equal(w.crash, null);
+  w.dispose();
+});
+
+test('a queued crash from a previous launch is flushed at init', async () => {
+  const store = memoryStore();
+  await store.save([{ v: 1, at: 1, error: { kind: 'error', name: 'E', message: 'x' }, page: { route: '/a' } }] as never);
+  let crashPosts = 0;
+  const w = await AlgoWidget.init({
+    host: 'https://os.example.com',
+    portalKey: 'pk_abc',
+    platform: 'android',
+    appId: 'com.acme.orders',
+    native: null,
+    crashStore: store,
+    fetch: (async (url: string) => {
+      if (String(url).endsWith('/crash')) crashPosts += 1;
+      if (String(url).endsWith('/session')) {
+        return new Response(
+          JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal: { crashCapture: true } }),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  // A crash report is worth most when it arrives before the user hits the same
+  // wall again.
+  assert.equal(crashPosts, 1);
+  assert.equal((await store.load()).length, 0);
+  w.dispose();
+});
+
+test('the native module is optional and its absence is not a failure', async () => {
+  assert.equal(resolveNativeCapture({}), null);
+  assert.equal(resolveNativeCapture({ AlgoWidgetCapture: {} }), null, 'present but wrong shape');
+  assert.deepEqual(await capabilitiesOf(null), NO_CAPTURE);
+  // A module that throws when asked what it can do cannot be trusted to do any
+  // of it.
+  assert.deepEqual(
+    await capabilitiesOf({
+      info: async () => {
+        throw new Error('nope');
+      },
+    } as never),
+    NO_CAPTURE,
+  );
+});
+
+test('the declared content type follows the extension the native side produced', () => {
+  assert.equal(contentTypeFor('voice-1.m4a'), 'audio/mp4');
+  assert.equal(contentTypeFor('screen.mov'), 'video/quicktime');
+  assert.equal(contentTypeFor('shot.png'), 'image/png');
+  assert.equal(contentTypeFor('mystery.bin'), 'application/octet-stream');
 });

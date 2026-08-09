@@ -7,6 +7,7 @@ import 'package:algo_widget/algo_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 class _MemoryStore extends CrashStore {
   List<Map<String, Object?>> items = [];
@@ -33,6 +34,19 @@ List<Map<String, Object?>> eventsOf(TraceRecorder rec, String type) =>
         .map((e) => e! as Map<String, Object?>)
         .where((e) => e['type'] == type)
         .toList();
+
+class _StubClient extends http.BaseClient {
+  _StubClient(this.handler);
+  final http.Response Function(http.BaseRequest, String) handler;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final body = request is http.Request ? request.body : '';
+    final res = handler(request, body);
+    return http.StreamedResponse(
+        Stream.value(utf8.encode(res.body)), res.statusCode);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -175,6 +189,7 @@ void main() {
   });
 
   _frameBridgeTests();
+  _facadeTests();
 
   group('bindAll', () {
     test('returns one teardown, and it is idempotent', () {
@@ -241,6 +256,140 @@ void _frameBridgeTests() {
         js.substring('window.postMessage('.length, js.lastIndexOf(", '*')")),
       ) as String;
       expect((jsonDecode(inner) as Map)['name'], "O'Brien\"; alert(1); //");
+    });
+  });
+}
+
+// ── The façade ─────────────────────────────────────────────────────────────
+// The property that matters most: init NEVER throws. An SDK that can break a
+// customer's launch path is not one they can ship.
+void _facadeTests() {
+  group('facade', () {
+    http.Client portalStub(Map<String, Object?>? portal) =>
+        _StubClient((req, body) {
+          if (!req.url.path.endsWith('/session')) {
+            return http.Response(jsonEncode({'issueId': 'i1'}), 200);
+          }
+          if (portal == null) {
+            return http.Response(jsonEncode({'error': 'unknown portal'}), 404);
+          }
+          return http.Response(
+            jsonEncode({'token': 'tk', 'exp': 9999999999999, 'portal': portal}),
+            200,
+          );
+        });
+
+    test('survives a portal that refuses us, and says it is unavailable',
+        () async {
+      final w = await AlgoWidget.init(
+        host: 'https://os.example.com',
+        portalKey: 'pk_abc',
+        platform: AlgoPlatform.android,
+        appId: 'com.acme.orders',
+        httpClient: portalStub(null),
+      );
+      expect(w.available, isFalse,
+          reason: 'the host should hide its entry point');
+      expect(w.offeredModes, isEmpty);
+      w.dispose();
+    });
+
+    test('the offered tiers are the portal ANDed with the device', () async {
+      final w = await AlgoWidget.init(
+        host: 'https://os.example.com',
+        portalKey: 'pk_abc',
+        platform: AlgoPlatform.android,
+        appId: 'com.acme.orders',
+        // A microphone, but no screen capture on this build.
+        capabilities:
+            const CaptureInfo(canScreenshot: true, canRecordVoice: true),
+        httpClient: portalStub({
+          'recordingEnabled': true,
+          'recordingModes': ['steps', 'voice', 'screen'],
+          'recordingMaxSeconds': 120,
+          'crashCapture': true,
+        }),
+      );
+      // Never offer a tier that fails the moment it is pressed.
+      expect(w.offeredModes, ['steps', 'voice']);
+      expect(w.recorder.remainingMs, 120000);
+      w.dispose();
+    });
+
+    test(
+        'a portal with recording off offers nothing, whatever the device can do',
+        () async {
+      final w = await AlgoWidget.init(
+        host: 'https://os.example.com',
+        portalKey: 'pk_abc',
+        platform: AlgoPlatform.ios,
+        appId: 'com.acme.orders',
+        capabilities: const CaptureInfo(
+          canScreenshot: true,
+          canRecordVoice: true,
+          canRecordScreen: true,
+        ),
+        httpClient: portalStub({
+          'recordingEnabled': false,
+          'recordingModes': ['steps'],
+          'crashCapture': true,
+        }),
+      );
+      expect(w.offeredModes, isEmpty);
+      w.dispose();
+    });
+
+    test('crash capture is off without a store rather than pretending',
+        () async {
+      final w = await AlgoWidget.init(
+        host: 'https://os.example.com',
+        portalKey: 'pk_abc',
+        platform: AlgoPlatform.android,
+        appId: 'com.acme.orders',
+        httpClient: portalStub({'crashCapture': true}),
+      );
+      // Reports built on a dying process with nowhere to go are lost reports.
+      expect(w.crash, isNull);
+      w.dispose();
+    });
+
+    test('a queued crash from a previous launch is flushed at init', () async {
+      final store = _MemoryStore()
+        ..items = [
+          {
+            'at': 1,
+            'error': {'kind': 'error', 'name': 'E', 'message': 'x'},
+            'page': {'route': '/a'},
+          }
+        ];
+      var crashPosts = 0;
+      final w = await AlgoWidget.init(
+        host: 'https://os.example.com',
+        portalKey: 'pk_abc',
+        platform: AlgoPlatform.android,
+        appId: 'com.acme.orders',
+        crashStore: store,
+        httpClient: _StubClient((req, body) {
+          if (req.url.path.endsWith('/crash')) crashPosts++;
+          if (req.url.path.endsWith('/session')) {
+            return http.Response(
+              jsonEncode({
+                'token': 'tk',
+                'exp': 9999999999999,
+                'portal': {'crashCapture': true},
+              }),
+              200,
+            );
+          }
+          return http.Response('{}', 200);
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      // A crash report is worth most when it arrives before the user hits the
+      // same wall again.
+      expect(crashPosts, 1);
+      expect(store.items, isEmpty);
+      w.dispose();
     });
   });
 }
