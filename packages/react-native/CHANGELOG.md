@@ -1,3 +1,12 @@
+## [0.1.3](https://github.com/algosoftbd/algo-widget-mobile/compare/react-native-v0.1.2...react-native-v0.1.3) (2026-08-09)
+
+
+### Bug Fixes
+
+* the frame could not read a single message the SDK sent ([5042b91](https://github.com/algosoftbd/algo-widget-mobile/commit/5042b918237bd2c6f27aed2f5949ad100148acb1))
+
+
+
 ## [0.1.2](https://github.com/algosoftbd/algo-widget-mobile/compare/react-native-v0.1.1...react-native-v0.1.2) (2026-08-09)
 
 
