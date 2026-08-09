@@ -51,6 +51,15 @@ class TraceRecorder {
   int get remainingMs =>
       _recording ? (_maxMs - _elapsed()).clamp(0, _maxMs) : _maxMs;
 
+  /// Elapsed and cap, which is the pair the PANEL wants: it renders the
+  /// countdown itself from `maxMs - ms` (see the frame's record-tick handler),
+  /// so handing it a pre-computed remainder left it nothing to fall back on when
+  /// a tick was missed. Media time, like everything else here — a paused
+  /// recording does not advance.
+  int get elapsedMs => _elapsed().clamp(0, _maxMs);
+
+  int get limitMs => _maxMs;
+
   int get _nowMs => _clock().millisecondsSinceEpoch;
 
   /// Begin. [route] is where the reporter is standing when they press Record —

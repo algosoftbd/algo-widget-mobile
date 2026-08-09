@@ -15,9 +15,12 @@ import type { NativeCapture } from './capture.ts';
 import { contentTypeFor, stageCaptured } from './capture.ts';
 import {
   attachmentMessage,
+  identityMessage,
   parseFrameMessage,
   postToFrame,
+  recordCapabilitiesMessage,
   recordResult,
+  recordStarted,
   recordTick,
   type FrameMessage,
   type RecordMode,
@@ -111,28 +114,37 @@ export class PanelSession {
    * the customer's own JavaScript, which is the same trust boundary the web
    * widget uses.
    *
-   * A session that cannot be minted is not an error to show a reporter: the
-   * panel is told there is no portal and renders its unavailable state, and the
-   * host should not have opened it in the first place (`widget.available`).
+   * THREE messages, not one, because that is what the frame listens for —
+   * `init`, then `identity`, then `record-capabilities`, exactly as the web
+   * loader sends them. Folded into init they were dropped without a word, so a
+   * host that had already told us the reporter's name got no prefill from it.
+   *
+   * A session that cannot be minted leaves the panel on its loading state and
+   * nothing else happens: the frame requires a token before it renders a form,
+   * and there is no message for "this failed". The host is expected not to have
+   * opened the panel at all (`widget.available`), and that is a real gap rather
+   * than a design — a frame-side unavailable state is the fix, not a client-side
+   * one.
    */
   private async sendInit(): Promise<void> {
     const { widget, identity, send } = this.deps;
     const ticket = await widget.client.session().catch(() => null);
+    if (!ticket) return;
     const offered = widget.offeredModes;
     send(
       postToFrame({
         type: 'algo-widget:init',
-        ...(ticket ? { token: ticket.token, exp: ticket.exp } : {}),
+        token: ticket.token,
+        exp: ticket.exp,
         page: widget.nav.currentRoute(),
         // The tiers the panel may offer are OURS, not the portal's raw list: a
         // device without a microphone must not be shown a voice tier the portal
         // happens to allow.
-        portal: ticket
-          ? { ...ticket.portal, recordingModes: offered, recordingEnabled: offered.length > 0 }
-          : null,
-        ...(identity ? { identity } : {}),
+        portal: { ...ticket.portal, recordingModes: offered, recordingEnabled: offered.length > 0 },
       }),
     );
+    if (identity?.name || identity?.email) send(postToFrame(identityMessage(identity)));
+    send(postToFrame(recordCapabilitiesMessage(offered)));
   }
 
   private async screenshot(): Promise<void> {
@@ -168,7 +180,7 @@ export class PanelSession {
     }
     this.mode = mode;
     widget.recorder.start(widget.nav.currentRoute());
-    send(postToFrame({ type: 'algo-widget:record-started', mode }));
+    send(postToFrame(recordStarted(mode, widget.recorder.limitMs)));
   }
 
   /** Refresh the countdown. Called by the host on an interval — this module
@@ -177,7 +189,11 @@ export class PanelSession {
     if (!this.recording) return;
     const { widget, send } = this.deps;
     const rec = widget.recorder;
-    send(postToFrame(recordTick(rec.remainingMs, rec.eventCount)));
+    send(
+      postToFrame(
+        recordTick({ elapsedMs: rec.elapsedMs, limitMs: rec.limitMs, events: rec.eventCount }),
+      ),
+    );
     // The recorder stops ITSELF at the portal's cap; the panel has to be told,
     // or the reporter watches a frozen countdown on a recording that ended.
     if (!rec.isRecording) void this.stopRecording({ cancel: false, auto: true });

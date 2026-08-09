@@ -72,6 +72,19 @@ export class TraceRecorder {
     return Math.max(0, this.maxMs - this.elapsed());
   }
 
+  /** Elapsed and cap, which is the pair the PANEL wants: it renders the
+   *  countdown itself from `maxMs - ms` (see the frame's record-tick handler),
+   *  so handing it a pre-computed remainder left it nothing to fall back on
+   *  when a tick was missed. Media time, like everything else here — a paused
+   *  recording does not advance. */
+  get elapsedMs(): number {
+    return this.elapsed();
+  }
+
+  get limitMs(): number {
+    return this.maxMs;
+  }
+
   get eventCount(): number {
     return this.events.length;
   }

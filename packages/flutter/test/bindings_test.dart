@@ -253,9 +253,20 @@ void _frameBridgeTests() {
     test("a reporter's text cannot break out of the injected expression", () {
       final js = postToFrame({'name': "O'Brien\"; alert(1); //"});
       final inner = jsonDecode(
-        js.substring(js.indexOf('("') + 1, js.lastIndexOf(", '*')")),
+        js.substring(js.indexOf('("') + 1, js.lastIndexOf('")') + 1),
       ) as String;
       expect((jsonDecode(inner) as Map)['name'], "O'Brien\"; alert(1); //");
+    });
+
+    test('the frame is posted an OBJECT — a string it cannot read', () {
+      // The bug this exists to keep out: the frame reads `event.data.type`,
+      // because on the web it is handed a structured clone. Posted as a string,
+      // `.type` was undefined and EVERY message this SDK sent was dropped in
+      // silence — the panel loaded, waited for an init it had already been
+      // given, and hung on "Loading…".
+      final js = postToFrame({'type': 'algo-widget:init', 'token': 'tk'});
+      expect(js, contains('JSON.parse('));
+      expect(js, isNot(contains('postMessage)("')));
     });
   });
 }
@@ -440,13 +451,15 @@ const _fullPortal = {
 
 void _panelTests() {
   group('panel', () {
+    /// `portal: null` = the portal refused us, so no ticket is ever minted.
     Future<(AlgoWidget, _FakeNative, PanelSession, List<String>)> fixture({
-      Map<String, Object?> portal = _fullPortal,
+      Map<String, Object?>? portal = _fullPortal,
       CaptureInfo capabilities = const CaptureInfo(
         canScreenshot: true,
         canRecordVoice: true,
         canRecordScreen: true,
       ),
+      Map<String, String>? identity,
     }) async {
       final sent = <String>[];
       final native = _FakeNative();
@@ -458,6 +471,9 @@ void _panelTests() {
         capabilities: capabilities,
         httpClient: _StubClient((req, body) {
           if (req.url.path.endsWith('/session')) {
+            if (portal == null) {
+              return http.Response(jsonEncode({'error': 'unknown portal'}), 404);
+            }
             return http.Response(
               jsonEncode(
                   {'token': 'tk', 'exp': 9999999999999, 'portal': portal}),
@@ -484,19 +500,24 @@ void _panelTests() {
         native: native,
         readFile: (_) async => Uint8List.fromList([1, 2, 3]),
         send: sent.add,
+        identity: identity,
       );
       return (widget, native, session, sent);
     }
 
-    // Pull the payload out without depending on which function the shim left
-    // in front of it.
+    // Pull the payload out of an injected `…postMessage(JSON.parse("…"), '*')`
+    // expression, without depending on which function the shim left in front
+    // of it.
     Map<String, Object?> payload(List<String> sent, int n) {
       final js = sent[n];
       final inner = jsonDecode(
-        js.substring(js.indexOf('("') + 1, js.lastIndexOf(", '*')")),
+        js.substring(js.indexOf('("') + 1, js.lastIndexOf('")') + 1),
       ) as String;
       return jsonDecode(inner) as Map<String, Object?>;
     }
+
+    List<Object?> types(List<String> sent) =>
+        [for (var i = 0; i < sent.length; i++) payload(sent, i)['type']];
 
     test('is initialised with the ticket, so it can submit', () async {
       final (widget, _, session, sent) = await fixture();
@@ -504,6 +525,37 @@ void _panelTests() {
       // The ticket crosses to a page on the OS ORIGIN — never into the
       // customer's own code, the same boundary the web widget uses.
       expect(payload(sent, 0)['token'], 'tk');
+      widget.dispose();
+    });
+
+    test('init is three messages, because that is what the frame hears',
+        () async {
+      final (widget, _, session, sent) = await fixture(
+        identity: const {'name': 'Jane', 'email': 'jane@acme.com'},
+      );
+      await session.handle({'type': 'algo-widget:ready'});
+      // Folded INTO init, identity and capabilities were silently ignored: the
+      // frame has a separate handler for each and no reader for either field on
+      // init. The symptom was a panel that never prefilled a name the host had
+      // already told us, and never offered a recorder a device could do.
+      expect(types(sent), [
+        'algo-widget:init',
+        'algo-widget:identity',
+        'algo-widget:record-capabilities',
+      ]);
+      expect(payload(sent, 1)['name'], 'Jane');
+      expect(payload(sent, 2)['voice'], isTrue);
+      widget.dispose();
+    });
+
+    test('a session that cannot be minted sends nothing it cannot back up',
+        () async {
+      // The frame requires a token before it renders a form, so an init
+      // carrying `portal: null` was a message it dropped anyway. The host is
+      // what should not have opened the panel (`AlgoWidget.available`).
+      final (widget, _, session, sent) = await fixture(portal: null);
+      await session.handle({'type': 'algo-widget:ready'});
+      expect(sent, isEmpty);
       widget.dispose();
     });
 
@@ -562,11 +614,9 @@ void _panelTests() {
           .handle({'type': 'algo-widget:record-start', 'mode': 'voice'});
       await session
           .handle({'type': 'algo-widget:record-stop', 'cancel': false});
-      final types = [
-        for (var i = 0; i < sent.length; i++) payload(sent, i)['type'],
-      ];
-      expect(types, contains('algo-widget:attached'));
-      expect(types.last, 'algo-widget:record-result');
+      final sentTypes = types(sent);
+      expect(sentTypes, contains('algo-widget:attached'));
+      expect(sentTypes.last, 'algo-widget:record-result');
       widget.dispose();
     });
 

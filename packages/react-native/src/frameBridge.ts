@@ -42,13 +42,41 @@ export interface FrameInit {
   /** The screen the reporter was on. Shown to them, and stored on the issue. */
   page: string;
   portal: PortalConfig;
-  /** Prefilled, editable, and never trusted — reporter-supplied identity is
-   *  display data server-side no matter who typed it. */
-  identity?: { name?: string; email?: string };
-  /** Which recording tiers this CLIENT can actually offer, ANDed with what the
-   *  portal allows. A device with no microphone permission, or an iOS build
-   *  without a usage description, must not be shown a tier that will fail. */
-  capabilities?: { steps: boolean; voice: boolean; screen: boolean };
+}
+
+/**
+ * Prefilled, editable, and never trusted — reporter-supplied identity is display
+ * data server-side no matter who typed it.
+ *
+ * Its OWN message, following init, because that is what the frame listens for.
+ * Carried inside init it was silently ignored, and the name and email the host
+ * app already knew were never prefilled.
+ */
+export function identityMessage(identity: { name?: string; email?: string }): object {
+  return {
+    type: 'algo-widget:identity',
+    ...(identity.name ? { name: identity.name } : {}),
+    ...(identity.email ? { email: identity.email } : {}),
+  };
+}
+
+/**
+ * Which recording tiers this CLIENT can actually offer. A device with no
+ * microphone permission, or an iOS build without a usage description, must not
+ * be shown a tier that will fail the moment it is pressed.
+ *
+ * Also its own message, for the same reason — and the frame ANDs it with the
+ * portal's own opt-in, so capability here is not permission. Absent means every
+ * tier is off: the frame offers a recorder only for a tier it was explicitly
+ * told about.
+ */
+export function recordCapabilitiesMessage(modes: readonly RecordMode[]): object {
+  return {
+    type: 'algo-widget:record-capabilities',
+    steps: modes.includes('steps'),
+    voice: modes.includes('voice'),
+    screen: modes.includes('screen'),
+  };
 }
 
 /**
@@ -154,30 +182,73 @@ export function frameShim(channel: string): string {
 })();`;
 }
 
-/** JS to evaluate in the WebView to deliver one message. Serialized through
- *  `JSON.stringify` so a reporter's own text — a name with an apostrophe, a
- *  description with a newline — cannot break out of the expression. */
+/**
+ * JS to evaluate in the WebView to deliver one message.
+ *
+ * The payload is a JSON string LITERAL in the generated source, so a reporter's
+ * own text — a name with an apostrophe, a description with a newline — stays
+ * data rather than breaking out of the expression. But it is parsed back into an
+ * OBJECT before it is posted, and that is the load-bearing half: the frame reads
+ * `event.data.type` directly, because on the web it is handed a structured
+ * clone. Posting the string meant `data.type` was `undefined`, so the frame
+ * dropped every message this SDK sent — the panel loaded, waited for an `init`
+ * it had already been given, and sat on "Loading…" forever.
+ *
+ * The frame now parses a string too, so a build shipped before this fix still
+ * works. That is the tolerance; this is the contract. Do not go back to sending
+ * a string because "it works either way" — the web loader has always posted
+ * objects, and one wire shape is what keeps the frame from having to know which
+ * client it is talking to.
+ */
 export function postToFrame(message: object): string {
   const payload = JSON.stringify(JSON.stringify(message));
   // Prefer the un-patched function the shim stashed: going through the patched
   // one would forward our own init straight back to us. Harmless (it parses to
   // nothing the SDK handles) but pointless, and confusing in a log.
-  return `(window.__algoPost || window.postMessage)(${payload}, '*');true;`;
+  return `(window.__algoPost || window.postMessage)(JSON.parse(${payload}), '*');true;`;
 }
 
-/** Tell the frame a staged attachment arrived, so it can show the card. Used
- *  for a screenshot, a recording, anything the NATIVE side produced. */
+/**
+ * Tell the frame a staged attachment arrived — a screenshot, a recording,
+ * anything the NATIVE side produced and uploaded itself.
+ *
+ * NOT YET UNDERSTOOD BY THE FRAME. Its attachments are local `File`s it stages
+ * itself, and it has no case for one that is already on the server, so this
+ * message is currently dropped. It is unreachable in practice — a screenshot
+ * needs a `NativeCapture`, and recording needs one plus a portal that enabled
+ * it, and no native capture layer ships yet — but a caller that DOES wire one up
+ * will see the capture succeed and no card appear. The frame half is the work
+ * that has to land alongside the native one; the message name and shape are
+ * settled here so both sides are written against the same thing.
+ */
 export function attachmentMessage(file: StagedFile, kind: string): object {
   return { type: 'algo-widget:attached', file: { ...file, kind } };
 }
 
-/** Live recording status — the countdown the reporter watches. Sent on a timer
- *  while recording so the panel can show `2:31 left` without owning the clock. */
-export function recordTick(remainingMs: number, events: number): object {
+/**
+ * Live recording status, sent on a timer while recording.
+ *
+ * ELAPSED and CAP, not a remainder: the panel renders `2:31 left` from
+ * `maxMs - ms` itself, and it keeps the last `maxMs` it was told so a dropped
+ * tick does not freeze the clock. `remainingMs` was a field it has never read.
+ */
+export function recordTick(opts: { elapsedMs: number; limitMs: number; events: number }): object {
   return {
     type: 'algo-widget:record-tick',
-    remainingMs: Math.max(0, Math.round(remainingMs)),
-    events,
+    ms: Math.max(0, Math.round(opts.elapsedMs)),
+    maxMs: Math.max(0, Math.round(opts.limitMs)),
+    events: opts.events,
+  };
+}
+
+/** Recording started — the panel swaps its picker for the live card. `maxMs` is
+ *  carried here as well as on every tick so the countdown is right on the first
+ *  frame instead of a second later. */
+export function recordStarted(mode: RecordMode, limitMs: number): object {
+  return {
+    type: 'algo-widget:record-started',
+    mode,
+    maxMs: Math.max(0, Math.round(limitMs)),
   };
 }
 

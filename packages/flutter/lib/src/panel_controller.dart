@@ -118,6 +118,18 @@ class PanelSession {
   /// routes itself — it is a page on the OS origin, so the ticket never enters
   /// the customer's own code, which is the same trust boundary the web widget
   /// uses.
+  ///
+  /// THREE messages, not one, because that is what the frame listens for —
+  /// `init`, then `identity`, then `record-capabilities`, exactly as the web
+  /// loader sends them. Folded into init they were dropped without a word, so a
+  /// host that had already told us the reporter's name got no prefill from it.
+  ///
+  /// A session that cannot be minted leaves the panel on its loading state and
+  /// nothing else happens: the frame requires a token before it renders a form,
+  /// and there is no message for "this failed". The host is expected not to have
+  /// opened the panel at all ([AlgoWidget.available]), and that is a real gap
+  /// rather than a design — a frame-side unavailable state is the fix, not a
+  /// client-side one.
   Future<void> _sendInit() async {
     Ticket? ticket;
     try {
@@ -125,30 +137,41 @@ class PanelSession {
     } catch (_) {
       ticket = null;
     }
+    if (ticket == null) return;
     final offered = widget.offeredModes;
-    send(postToFrame(<String, Object?>{
-      'type': 'algo-widget:init',
-      if (ticket != null) 'token': ticket.token,
-      if (ticket != null) 'exp': ticket.exp,
-      'page': widget.observer.currentRoute,
+    send(postToFrame(frameInit(
+      token: ticket.token,
+      exp: ticket.exp,
+      page: widget.observer.currentRoute,
       // The tiers the panel may offer are OURS, not the portal's raw list: a
       // device without a microphone must not be shown a voice tier the portal
       // happens to allow.
-      'portal': ticket == null
-          ? null
-          : <String, Object?>{
-              'title': ticket.portal.title,
-              'accentColor': ticket.portal.accentColor,
-              'recordingEnabled': offered.isNotEmpty,
-              'recordingModes': offered,
-              'recordingMaxSeconds': ticket.portal.recordingMaxSeconds,
-              'crashCapture': ticket.portal.crashCapture,
-              'maxAttachments': ticket.portal.maxAttachments,
-            },
-      if (identity != null) 'identity': identity,
-    }));
+      portal: <String, Object?>{
+        'title': ticket.portal.title,
+        'accentColor': ticket.portal.accentColor,
+        'recordingEnabled': offered.isNotEmpty,
+        'recordingModes': offered,
+        'recordingMaxSeconds': ticket.portal.recordingMaxSeconds,
+        'crashCapture': ticket.portal.crashCapture,
+        'maxAttachments': ticket.portal.maxAttachments,
+      },
+    )));
+    final who = identity;
+    if (who != null && (who['name'] != null || who['email'] != null)) {
+      send(postToFrame(identityMessage(name: who['name'], email: who['email'])));
+    }
+    send(postToFrame(recordCapabilitiesMessage(offered)));
   }
 
+  /// NOTE ON `algo-widget:attached`, sent here and from [_stop]: THE FRAME DOES
+  /// NOT YET UNDERSTAND IT. Its attachments are local files it stages itself,
+  /// and it has no case for one that is already on the server, so the message is
+  /// currently dropped. Unreachable in practice — a screenshot needs a
+  /// [NativeCapture], recording needs one plus a portal that enabled it, and no
+  /// native capture layer ships yet — but a caller that DOES wire one up will
+  /// see the capture succeed and no card appear. The frame half is the work that
+  /// has to land alongside the native one; the name and shape are settled so
+  /// both sides are written against the same thing.
   Future<void> _screenshot() async {
     String? path;
     try {
@@ -186,16 +209,18 @@ class PanelSession {
     }
     _mode = mode;
     widget.recorder.start(widget.observer.currentRoute);
-    send(postToFrame(
-        <String, Object?>{'type': 'algo-widget:record-started', 'mode': mode}));
+    send(postToFrame(recordStarted(mode, widget.recorder.limitMs)));
   }
 
   /// Refresh the countdown. Called by the host on a timer — this class owns no
   /// timer, so no test has to wait on one.
   void tick() {
     if (!recording) return;
-    send(postToFrame(
-        recordTick(widget.recorder.remainingMs, widget.recorder.eventCount)));
+    send(postToFrame(recordTick(
+      elapsedMs: widget.recorder.elapsedMs,
+      limitMs: widget.recorder.limitMs,
+      events: widget.recorder.eventCount,
+    )));
     // The recorder stops ITSELF at the portal's cap; the panel has to be told,
     // or the reporter watches a frozen countdown on a recording that ended.
     if (!widget.recorder.isRecording) unawaited(_stop(cancel: false));

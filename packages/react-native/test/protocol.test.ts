@@ -616,6 +616,16 @@ test("a reporter's text cannot break out of the injected expression", () => {
   assert.equal(JSON.parse(injectedPayload(js)).name, `O'Brien"; alert(1); //`);
 });
 
+test('the frame is posted an OBJECT — a string is a message it cannot read', () => {
+  // The bug this exists to keep out: the frame reads `event.data.type`, because
+  // on the web it is handed a structured clone. Posted as a string, `.type` was
+  // undefined and EVERY message this SDK sent was dropped in silence — the panel
+  // loaded, waited for an init it had already been given, and hung on "Loading…".
+  const posted = evaluated(postToFrame({ type: 'algo-widget:init', token: 'tk' }));
+  assert.equal(typeof posted, 'object');
+  assert.equal((posted as { type?: string }).type, 'algo-widget:init');
+});
+
 // ── The façade ─────────────────────────────────────────────────────────────
 // The property that matters most: init NEVER throws. An SDK that can break a
 // customer's launch path is not one they can ship.
@@ -818,7 +828,11 @@ function fakeNative(overrides: Record<string, unknown> = {}) {
   return native;
 }
 
-async function panelFixture(portal: Record<string, unknown>) {
+/** `portal: null` = the portal refused us, so no ticket is ever minted. */
+async function panelFixture(
+  portal: Record<string, unknown> | null,
+  opts: { identity?: { name?: string; email?: string } } = {},
+) {
   const sent: string[] = [];
   const native = fakeNative();
   const widget = await AlgoWidget.init({
@@ -829,6 +843,9 @@ async function panelFixture(portal: Record<string, unknown>) {
     native: native as never,
     fetch: (async (url: string) => {
       if (String(url).endsWith('/session')) {
+        if (!portal) {
+          return new Response(JSON.stringify({ error: 'unknown portal' }), { status: 404 });
+        }
         return new Response(
           JSON.stringify({ token: 'tk', exp: Date.now() + 1e6, portal }),
           { status: 200 },
@@ -852,6 +869,7 @@ async function panelFixture(portal: Record<string, unknown>) {
     native: native as never,
     readFile: async () => new Uint8Array([1, 2, 3]),
     send: (js) => sent.push(js),
+    ...(opts.identity ? { identity: opts.identity } : {}),
   });
   return { widget, native, session, sent };
 }
@@ -861,10 +879,32 @@ function sentPayload(sent: string[], n: number): Record<string, unknown> {
   return JSON.parse(injectedPayload(sent[n]!));
 }
 
-/** Pull the payload out of an injected `…postMessage("…", '*')` expression
- *  without depending on which function the shim left in front of it. */
+/** The type of the Nth message, for asserting the ORDER of a burst. */
+function sentType(sent: string[], n: number): unknown {
+  return sentPayload(sent, n).type;
+}
+
+/**
+ * Pull the payload out of an injected `…postMessage(JSON.parse("…"), '*')`
+ * expression, without depending on which function the shim left in front of it.
+ *
+ * Returns the JSON TEXT, so a caller can assert on the wire form as well as the
+ * parsed value — `evaluated()` below is what proves the frame receives an
+ * object rather than that text.
+ */
 function injectedPayload(js: string): string {
-  return JSON.parse(js.slice(js.indexOf('("') + 1, js.lastIndexOf(", '*')")));
+  const start = js.indexOf('("');
+  const end = js.lastIndexOf('")');
+  return JSON.parse(js.slice(start + 1, end + 1));
+}
+
+/** What the WebView would actually post: run the generated expression with a
+ *  stub `window` and capture the first argument. */
+function evaluated(js: string): unknown {
+  let posted: unknown;
+  const win = { postMessage: (data: unknown) => void (posted = data) };
+  new Function('window', js)(win);
+  return posted;
 }
 
 const FULL_PORTAL = {
@@ -1080,7 +1120,43 @@ test('a repeated ready re-sends init rather than hanging', async () => {
   // `ready` is sent once by the frame and never repeated, so a missed one would
   // be unrecoverable. Answering every time is what makes the load-event retry
   // safe.
-  const types = sent.map((_, i) => sentPayload(sent, i).type);
-  assert.deepEqual(types, ['algo-widget:init', 'algo-widget:init']);
+  const types = sent.map((_, i) => sentType(sent, i));
+  assert.deepEqual(types, [
+    'algo-widget:init',
+    'algo-widget:record-capabilities',
+    'algo-widget:init',
+    'algo-widget:record-capabilities',
+  ]);
+  widget.dispose();
+});
+
+test('init is three messages, because that is what the frame listens for', async () => {
+  const { session, sent, widget } = await panelFixture(FULL_PORTAL, {
+    identity: { name: 'Jane', email: 'jane@acme.com' },
+  });
+  await session.handle({ type: 'algo-widget:ready' });
+  // Folded INTO init, identity and capabilities were silently ignored: the frame
+  // has a separate handler for each, and no reader for either field on init. The
+  // symptom was a panel that never prefilled a name the host had already told us
+  // and never offered a recorder a device could do.
+  assert.deepEqual(sent.map((_, i) => sentType(sent, i)), [
+    'algo-widget:init',
+    'algo-widget:identity',
+    'algo-widget:record-capabilities',
+  ]);
+  assert.equal(sentPayload(sent, 1).name, 'Jane');
+  const caps = sentPayload(sent, 2);
+  assert.equal(caps.steps, true);
+  assert.equal(caps.voice, true);
+  widget.dispose();
+});
+
+test('a session that cannot be minted sends nothing it cannot back up', async () => {
+  // The frame requires a token before it renders a form, so an init carrying
+  // `portal: null` was a message it dropped anyway. The host is what should not
+  // have opened the panel (`widget.available`).
+  const { session, sent, widget } = await panelFixture(null);
+  await session.handle({ type: 'algo-widget:ready' });
+  assert.deepEqual(sent, []);
   widget.dispose();
 });
