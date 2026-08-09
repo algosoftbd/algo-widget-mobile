@@ -2,9 +2,15 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    "allowImportingTsExtensions": false,
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    // The sources import each other with explicit `.ts` extensions, which is
+    // what lets `node --test --experimental-strip-types` run them with no build
+    // step. Emitting requires those specifiers to become `.js`; this rewrites
+    // them rather than forcing a second, extensionless module layout that only
+    // the build understands.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
     "outDir": "lib"
   },
   "include": ["src"]
