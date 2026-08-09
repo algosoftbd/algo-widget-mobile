@@ -27,6 +27,12 @@ First release. Everything from the wire protocol up to a one-call
   a WebView. An unrecognised message is ignored rather than fatal, because the
   panel and the SDK version independently.
 
-Not in this release: the native capture layer (screen, voice, screenshot) and
-the widget that presents the panel. The client API is complete without them —
-an app can build its own report UI against it today.
+- **`AlgoWidgetPanel`** (from `@algosoft/algo-widget-react-native/panel`) — the
+  report panel in a WebView, loading the same page the web widget serves. Behind
+  a subpath so an app that builds its own report UI never pulls in React or
+  react-native-webview.
+
+Not in this release: the native capture layer (screen, voice, screenshot). Its
+contract is defined (`NativeCapture`) and the Kotlin and Swift cores exist, but
+no module is registered yet — so a panel offers `steps` only until you supply an
+implementation. Everything else works today.

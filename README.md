@@ -103,7 +103,7 @@ SDK into evidence. An SDK that is only initialised still files reports; they jus
 | bindings (network, logs, crashes, navigation, lifecycle) | **done** | **done** |
 | report-panel bridge | **done** | **done** |
 | `AlgoWidget.init(...)` façade | **done** | **done** |
-| report panel (bridge, controller, WebView host) | **done** | controller done, widget pending |
+| report panel (bridge, controller, WebView host) | **done** | **done** |
 | native capture (screen, voice, screenshot) | interface + Kotlin/Swift core; needs device work | as RN |
 | iOS App Attest | **blocked on server support** — use `attestation: 'off'` for internal builds | |
 
