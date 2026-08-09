@@ -206,12 +206,24 @@ Map<String, Object?> identityMessage({String? name, String? email}) =>
 /// portal's own opt-in, so capability here is not permission. Absent means every
 /// tier is off: the frame offers a recorder only for a tier it was explicitly
 /// told about.
-Map<String, Object?> recordCapabilitiesMessage(List<String> modes) =>
+Map<String, Object?> recordCapabilitiesMessage(
+  List<String> modes, {
+  required bool snip,
+}) =>
     <String, Object?>{
       'type': 'algo-widget:record-capabilities',
       'steps': modes.contains('steps'),
       'voice': modes.contains('voice'),
       'screen': modes.contains('screen'),
+      // Not a recording tier, but the same question — what can THIS host do —
+      // and the frame reads it off this message. Its default there is the
+      // OPPOSITE of the tiers': absent means SUPPORTED, because every web
+      // loader can snip and none of them sends the field, so a client with no
+      // native screenshot must say `false` OUT LOUD. Without it the panel
+      // offers "Snip this page", the request reaches a host that cannot answer
+      // it, and the reporter gets "Screen capture failed" — a button whose only
+      // outcome is an error.
+      'snip': snip,
     };
 
 /// Recording started — the panel swaps its picker for the live card. `maxMs` is

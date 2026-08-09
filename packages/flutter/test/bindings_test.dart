@@ -460,6 +460,9 @@ void _panelTests() {
         canRecordScreen: true,
       ),
       Map<String, String>? identity,
+
+      /// false = the panel was built with no native capture to call.
+      bool withNative = true,
     }) async {
       final sent = <String>[];
       final native = _FakeNative();
@@ -498,7 +501,7 @@ void _panelTests() {
       );
       final session = PanelSession(
         widget: widget,
-        native: native,
+        native: withNative ? native : null,
         readFile: (_) async => Uint8List.fromList([1, 2, 3]),
         send: sent.add,
         identity: identity,
@@ -547,6 +550,32 @@ void _panelTests() {
       expect(payload(sent, 1)['name'], 'Jane');
       expect(payload(sent, 2)['voice'], isTrue);
       widget.dispose();
+    });
+
+    test('a client that cannot screenshot says so, and loses the button',
+        () async {
+      // "Snip this page" whose only possible outcome is "Screen capture failed"
+      // is worse than no button. Absent, the field means SUPPORTED — every web
+      // loader can snip and none of them sends it — so a client without native
+      // capture has to say `false` out loud.
+      Map<String, Object?>? caps(List<String> sent) {
+        for (var i = 0; i < sent.length; i++) {
+          final m = payload(sent, i);
+          if (m['type'] == 'algo-widget:record-capabilities') return m;
+        }
+        return null;
+      }
+
+      final (widget, _, session, sent) = await fixture();
+      await session.handle({'type': 'algo-widget:ready'});
+      expect(caps(sent)?['snip'], isTrue);
+      widget.dispose();
+
+      final (bareWidget, _, bareSession, bareSent) =
+          await fixture(withNative: false);
+      await bareSession.handle({'type': 'algo-widget:ready'});
+      expect(caps(bareSent)?['snip'], isFalse);
+      bareWidget.dispose();
     });
 
     test('a session that cannot be minted sends nothing it cannot back up',
