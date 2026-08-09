@@ -91,7 +91,15 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      # PINNED. The runner ships a Gradle newer than the Android Gradle Plugin
+      # supports, and the resulting failure names an internal AGP task
+      # (`mapReleaseSourceSetPaths`) rather than the version mismatch that
+      # caused it — so an unpinned build breaks on a runner-image update, with a
+      # message that points nowhere. Move this and `com.android.library` in
+      # build.gradle.kts together.
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
       - name: Assemble
         run: gradle assembleRelease --no-daemon
 
