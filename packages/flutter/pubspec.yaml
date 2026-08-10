@@ -2,7 +2,7 @@ name: algo_widget
 description: >-
   Algo Widget for Flutter — in-app bug reporting with screen recording, voice
   narration, a recorded interaction trace, and automatic crash capture.
-version: 0.2.0
+version: 0.3.0
 repository: https://github.com/algosoftbd/algo-widget-mobile
 issue_tracker: https://github.com/algosoftbd/algo-widget-mobile/issues
 documentation: https://github.com/algosoftbd/algo-widget-mobile/blob/main/docs/PROTOCOL.md

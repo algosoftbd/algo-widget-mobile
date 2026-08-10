@@ -1,3 +1,12 @@
+# [0.3.0](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.2.0...flutter-v0.3.0) (2026-08-10)
+
+
+### Features
+
+* carry the panel's attribution switch through to the SDKs ([9bfa29f](https://github.com/algosoftbd/algo-widget-mobile/commit/9bfa29fb1ca6736f2dbd8c6bd57b9517d8b0c626))
+
+
+
 # [0.2.0](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.5...flutter-v0.2.0) (2026-08-09)
 
 
@@ -31,15 +40,6 @@
 ### Bug Fixes
 
 * the frame could not read a single message the SDK sent ([5042b91](https://github.com/algosoftbd/algo-widget-mobile/commit/5042b918237bd2c6f27aed2f5949ad100148acb1))
-
-
-
-## [0.1.2](https://github.com/algosoftbd/algo-widget-mobile/compare/flutter-v0.1.1...flutter-v0.1.2) (2026-08-09)
-
-
-### Bug Fixes
-
-* the panel could not hear the frame at all ([240812c](https://github.com/algosoftbd/algo-widget-mobile/commit/240812c0b0edf7eebb7dd42daddbaf823b02e905))
 
 
 
