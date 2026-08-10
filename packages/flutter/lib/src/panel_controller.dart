@@ -166,7 +166,12 @@ class PanelSession {
       // device without a microphone must not be shown a voice tier the portal
       // happens to allow.
       portal: <String, Object?>{
+        // Every field is listed EXPLICITLY here, so a field added server-side
+        // reaches the React Native panel for free (it spreads the object) and
+        // reaches this one only when someone remembers. Add it in the same
+        // change, or the panel quietly renders the old default.
         'title': ticket.portal.title,
+        'showPoweredBy': ticket.portal.showPoweredBy,
         'accentColor': ticket.portal.accentColor,
         'recordingEnabled': offered.isNotEmpty,
         'recordingModes': offered,

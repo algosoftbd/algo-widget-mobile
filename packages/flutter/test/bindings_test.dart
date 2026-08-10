@@ -589,6 +589,19 @@ void _panelTests() {
       widget.dispose();
     });
 
+    test('is told whether to show attribution', () async {
+      final (widget, _, session, sent) = await fixture(
+        portal: {..._fullPortal, 'showPoweredBy': false},
+      );
+      await session.handle({'type': 'algo-widget:ready'});
+      final portal = payload(sent, 0)['portal']! as Map<String, Object?>;
+      // This panel builds its portal map field by field, so a field added
+      // server-side reaches it only when someone remembers. RN spreads the
+      // object and gets it free; this is the test that notices the difference.
+      expect(portal['showPoweredBy'], isFalse);
+      widget.dispose();
+    });
+
     test('is offered our tiers, not the portal’s raw list', () async {
       final (widget, _, session, sent) = await fixture(
         capabilities: const CaptureInfo(canScreenshot: true),

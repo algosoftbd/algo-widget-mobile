@@ -355,6 +355,17 @@ void main() {
           reason: 'a crash flush and a reporter must not race two exchanges');
     });
 
+    test('attribution is SHOWN unless the portal explicitly says otherwise',
+        () {
+      // The inverse of crashCapture's default, deliberately: a field the server
+      // has not sent yet must not silently strip a customer's attribution.
+      expect(PortalConfig.fromJson(const {}).showPoweredBy, isTrue);
+      expect(
+        PortalConfig.fromJson(const {'showPoweredBy': false}).showPoweredBy,
+        isFalse,
+      );
+    });
+
     test('crash capture is OFF unless the portal explicitly says otherwise',
         () {
       final absent = PortalConfig.fromJson(const {});

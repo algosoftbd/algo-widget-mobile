@@ -55,6 +55,7 @@ class AppFacts {
 class PortalConfig {
   const PortalConfig({
     required this.title,
+    required this.showPoweredBy,
     required this.recordingEnabled,
     required this.recordingModes,
     required this.recordingMaxSeconds,
@@ -75,6 +76,10 @@ class PortalConfig {
         // because a field was missing would be observing an app whose portal
         // never said it could.
         crashCapture: json['crashCapture'] == true,
+        // Absent ⇒ SHOWN. The inverse of `crashCapture`'s default and
+        // deliberately so: a field the server has not sent yet must not
+        // silently strip a customer's attribution.
+        showPoweredBy: json['showPoweredBy'] != false,
         maxAttachments:
             (json['maxAttachments'] as num?)?.toInt() ?? kMaxAttachments,
       );
@@ -86,6 +91,9 @@ class PortalConfig {
   final int recordingMaxSeconds;
   final bool crashCapture;
   final int maxAttachments;
+
+  /// Whether the panel shows "Powered by AlgoSoft Technologies Limited".
+  final bool showPoweredBy;
 }
 
 class Ticket {
