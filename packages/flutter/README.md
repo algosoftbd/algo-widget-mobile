@@ -71,6 +71,35 @@ fingerprints. With Play App Signing a Play Store build presents a different
 certificate than the same build off your machine, and registering only one locks
 out half your users.
 
+## Attaching files
+
+Works out of the box, and **needs no permission** — no manifest entry, no
+runtime prompt. The picker goes through Android's system photo picker (13+) or
+the Storage Access Framework below it, both of which grant access to the one
+item the reporter chose. Asking for `READ_MEDIA_IMAGES` would request a
+customer's users' entire gallery to read a file they had already handed over.
+
+Android needs the wiring because an `<input type="file">` in an Android WebView
+opens nothing on its own: the platform asks the embedder through
+`onShowFileChooser`, and an unanswered request is dropped silently — no error,
+no dialog. `AlgoWidgetPanel` answers it. iOS is deliberately left alone, since
+WKWebView presents its own picker.
+
+The default covers images and video. To widen it — documents, or a picker your
+app already ships — pass your own:
+
+```dart
+AlgoWidgetPanel(
+  widget: algo,
+  readFile: (path) => File(path).readAsBytes(),
+  fileSelector: (params) async => myPicker(params.acceptTypes),
+)
+```
+
+Return `[]` when the reporter cancels, and never throw: Android expects an
+answer either way, and a dropped one wedges the file input for the rest of the
+session.
+
 ## Licence
 
 Apache-2.0.

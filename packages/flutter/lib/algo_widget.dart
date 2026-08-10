@@ -9,6 +9,7 @@ export 'src/algo_widget_base.dart';
 export 'src/bindings.dart';
 export 'src/client.dart';
 export 'src/crash.dart';
+export 'src/file_selector.dart';
 export 'src/frame_bridge.dart';
 export 'src/panel.dart';
 export 'src/panel_controller.dart';

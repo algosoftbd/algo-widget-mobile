@@ -12,6 +12,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+
+import 'file_selector.dart';
 
 import 'algo_widget_base.dart';
 import 'frame_bridge.dart';
@@ -32,6 +35,7 @@ class AlgoWidgetPanel extends StatefulWidget {
     this.onClose,
     this.onSubmitted,
     this.onReady,
+    this.fileSelector,
   });
 
   final AlgoWidget widget;
@@ -44,6 +48,16 @@ class AlgoWidgetPanel extends StatefulWidget {
   final Map<String, String>? identity;
   final void Function()? onClose;
   final void Function(String? issueId)? onSubmitted;
+
+  /// Chooses files when the reporter taps Attach — ANDROID ONLY, and only
+  /// because Android has no built-in answer (see file_selector.dart). iOS is
+  /// left alone: WKWebView presents its own picker, and intercepting it would
+  /// replace a working native flow with our approximation of one.
+  ///
+  /// Defaults to [defaultFileSelector] (system photo picker, no permission).
+  /// Pass your own to widen it to documents, or to reuse a picker this app
+  /// already ships.
+  final AlgoFileSelector? fileSelector;
 
   /// The panel is initialised and about to render a form — take your loading
   /// state down here. A WebView is blank while it loads, and on a phone that
@@ -124,6 +138,15 @@ class _AlgoWidgetPanelState extends State<AlgoWidgetPanel> {
         ),
       )
       ..loadRequest(Uri.parse(url));
+
+    // Attach, on Android. Checked by TYPE rather than by `Platform.isAndroid`:
+    // this is a question about which controller was built, the answer is the
+    // same one, and it keeps `dart:io` out of the package.
+    final platform = _controller.platform;
+    if (platform is AndroidWebViewController) {
+      final select = widget.fileSelector ?? defaultFileSelector;
+      unawaited(platform.setOnShowFileSelector(select));
+    }
 
     // The countdown the reporter watches. Driven here rather than inside the
     // session so that class owns no timer and no test has to wait on one.

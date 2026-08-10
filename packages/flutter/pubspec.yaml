@@ -19,6 +19,18 @@ dependencies:
   # serves, so the form, the draft store, the annotation UI and the countdown
   # are one implementation reaching four clients. First-party (flutter.dev).
   webview_flutter: ^4.10.0
+  # Android only reaches a file picker through a callback the HOST must
+  # implement — `<input type="file">` in an Android WebView does nothing at all
+  # until `setOnShowFileSelector` is set, which is why Attach worked on iOS and
+  # in React Native and silently did nothing here. Imported directly (not just
+  # as webview_flutter's transitive dep) because that API lives on the Android
+  # controller, not the federated interface.
+  webview_flutter_android: ^4.3.0
+  # ...and the callback has to RETURN chosen files, so something must choose
+  # them. First-party (flutter.dev), like webview_flutter, and it needs no
+  # runtime permission and no manifest entry: it goes through the system photo
+  # picker (Android 13+) / SAF below that, which grant per-item access.
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_lints: ^5.0.0
